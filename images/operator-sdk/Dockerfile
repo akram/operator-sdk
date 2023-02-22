@@ -17,7 +17,7 @@ COPY . .
 RUN GOOS=linux GOARCH=$TARGETARCH make build/operator-sdk
 
 # Final image.
-FROM registry.access.redhat.com/ubi8/ubi-minimal:8.3-298
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.7-1085
 
 RUN microdnf install -y golang make which
 
