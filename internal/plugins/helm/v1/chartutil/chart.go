@@ -17,7 +17,6 @@ package chartutil
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -28,6 +27,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli"
 	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/repo"
 )
 
@@ -52,7 +52,7 @@ type Options struct {
 // NewChart creates a new helm chart for the project from helm's default template.
 // It returns a chart.Chart that references the newly created chart or an error.
 func NewChart(name string) (*chart.Chart, error) {
-	tmpDir, err := ioutil.TempDir("", "osdk-helm-chart")
+	tmpDir, err := os.MkdirTemp("", "osdk-helm-chart")
 	if err != nil {
 		return nil, err
 	}
@@ -86,22 +86,22 @@ func NewChart(name string) (*chart.Chart, error) {
 // If opts.Repo is not specified, the following chart reference formats are supported:
 //
 //   - <repoName>/<chartName>: Fetch the helm chart named chartName from the helm
-//                             chart repository named repoName, as specified in the
-//                             $HELM_HOME/repositories/repositories.yaml file.
+//     chart repository named repoName, as specified in the
+//     $HELM_HOME/repositories/repositories.yaml file.
 //
 //   - <url>: Fetch the helm chart archive at the specified URL.
 //
 // If opts.Repo is specified, only one chart reference format is supported:
 //
 //   - <chartName>: Fetch the helm chart named chartName in the helm chart repository
-//                  specified by opts.Repo
+//     specified by opts.Repo
 //
 // If opts.Version is not set, it will fetch the latest available version of the helm
 // chart. Otherwise, it will fetch the specified version.
 // opts.Version is not used when opts.Chart itself refers to a specific version, for
 // example when it is a local path or a URL.
 func LoadChart(opts Options) (*chart.Chart, error) {
-	tmpDir, err := ioutil.TempDir("", "osdk-helm-chart")
+	tmpDir, err := os.MkdirTemp("", "osdk-helm-chart")
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +127,19 @@ func LoadChart(opts Options) (*chart.Chart, error) {
 func downloadChart(destDir string, opts Options) (string, error) {
 	settings := cli.New()
 	getters := getter.All(settings)
+
+	// Create registry client for OCI registry support
+	registryClient, err := registry.NewClient()
+	if err != nil {
+		return "", fmt.Errorf("failed to create registry client: %w", err)
+	}
+
 	c := downloader.ChartDownloader{
 		Out:              os.Stderr,
 		Getters:          getters,
 		RepositoryConfig: settings.RepositoryConfig,
 		RepositoryCache:  settings.RepositoryCache,
+		RegistryClient:   registryClient,
 	}
 
 	if opts.Repo != "" {
@@ -152,7 +160,7 @@ func downloadChart(destDir string, opts Options) (string, error) {
 
 // ScaffoldChart scaffolds the provided chart.Chart to a known directory relative to projectDir
 //
-// It also fetches the dependencies and reloads the chart.Chart
+// # It also fetches the dependencies and reloads the chart.Chart
 //
 // It returns the reloaded chart, the relative path, or an error.
 func ScaffoldChart(chrt *chart.Chart, projectDir string) (*chart.Chart, string, error) {
@@ -183,6 +191,12 @@ func fetchChartDependencies(chartPath string) error {
 	settings := cli.New()
 	getters := getter.All(settings)
 
+	// Create registry client for OCI registry support
+	registryClient, err := registry.NewClient()
+	if err != nil {
+		return fmt.Errorf("failed to create registry client: %w", err)
+	}
+
 	out := &bytes.Buffer{}
 	man := &downloader.Manager{
 		Out:              out,
@@ -190,6 +204,7 @@ func fetchChartDependencies(chartPath string) error {
 		Getters:          getters,
 		RepositoryConfig: settings.RepositoryConfig,
 		RepositoryCache:  settings.RepositoryCache,
+		RegistryClient:   registryClient,
 	}
 	if err := man.Build(); err != nil {
 		fmt.Println(out.String())

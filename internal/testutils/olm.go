@@ -16,17 +16,16 @@ package testutils
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 
-	_ "sigs.k8s.io/kubebuilder/v3/pkg/config/v2" // Register config/v2 for `config.New`
-	_ "sigs.k8s.io/kubebuilder/v3/pkg/config/v3" // Register config/v3 for `config.New`
+	_ "sigs.k8s.io/kubebuilder/v4/pkg/config/v3" // Register config/v3 for `config.New`
 
 	"github.com/operator-framework/operator-sdk/internal/util/projutil"
 )
 
 const (
-	OlmVersionForTestSuite = "0.17.0"
+	OlmVersionForTestSuite = "0.28.0"
 )
 
 var makefilePackagemanifestsFragment = `
@@ -44,16 +43,16 @@ PKG_MAN_OPTS ?= $(PKG_FROM_VERSION) $(PKG_CHANNELS) $(PKG_IS_DEFAULT_CHANNEL)
 
 # Generate package manifests.
 packagemanifests: kustomize %s
-	operator-sdk generate kustomize manifests -q --interactive=false
+	$(OPERATOR_SDK) generate kustomize manifests -q --interactive=false
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/manifests | operator-sdk generate packagemanifests -q --version $(VERSION) $(PKG_MAN_OPTS)
+	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate packagemanifests -q --version $(VERSION) $(PKG_MAN_OPTS)
 `
 
 // AddPackagemanifestsTarget will append the packagemanifests target to the makefile
 // in order to test the steps described in the docs.
 // More info:  https://v1-0-x.sdk.operatorframework.io/docs/olm-integration/generation/#package-manifests-formats
 func (tc TestContext) AddPackagemanifestsTarget(operatorType projutil.OperatorType) error {
-	makefileBytes, err := ioutil.ReadFile(filepath.Join(tc.Dir, "Makefile"))
+	makefileBytes, err := os.ReadFile(filepath.Join(tc.Dir, "Makefile"))
 	if err != nil {
 		return err
 	}
@@ -67,18 +66,18 @@ func (tc TestContext) AddPackagemanifestsTarget(operatorType projutil.OperatorTy
 
 	// update makefile by adding the packagemanifests target
 	makefileBytes = append([]byte(makefilePackagemanifestsFragment), makefileBytes...)
-	err = ioutil.WriteFile(filepath.Join(tc.Dir, "Makefile"), makefileBytes, 0644)
+	err = os.WriteFile(filepath.Join(tc.Dir, "Makefile"), makefileBytes, 0644)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// DisableOLMBundleInterativeMode will update the Makefile to disable the interactive mode
+// DisableManifestsInteractiveMode will update the Makefile to disable the interactive mode
 func (tc TestContext) DisableManifestsInteractiveMode() error {
 	// Todo: check if we cannot improve it since the replace/content will exists in the
 	// pkgmanifest target if it be scaffolded before this call
-	content := "operator-sdk generate kustomize manifests"
+	content := "$(OPERATOR_SDK) generate kustomize manifests"
 	replace := content + " --interactive=false"
 	return ReplaceInFile(filepath.Join(tc.Dir, "Makefile"), content, replace)
 }
@@ -89,9 +88,5 @@ func (tc TestContext) GenerateBundle() error {
 		return err
 	}
 
-	if err := tc.Make("bundle", "IMG="+tc.ImageName); err != nil {
-		return err
-	}
-
-	return nil
+	return tc.Make("bundle", "IMG="+tc.ImageName)
 }

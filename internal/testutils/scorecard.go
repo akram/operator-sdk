@@ -18,9 +18,10 @@ package testutils
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
+
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
 )
 
 const scorecardImage = "quay.io/operator-framework/scorecard-test:.*"
@@ -62,7 +63,7 @@ func (tc TestContext) AddScorecardCustomPatchFile() error {
 	// drop in the patch file
 	customScorecardPatchFile := filepath.Join(tc.Dir, "config", "scorecard", "patches", "custom.config.yaml")
 	patchBytes := []byte(customScorecardPatch)
-	err := ioutil.WriteFile(customScorecardPatchFile, patchBytes, 0777)
+	err := os.WriteFile(customScorecardPatchFile, patchBytes, 0777)
 	if err != nil {
 		fmt.Printf("can not write %s %s\n", customScorecardPatchFile, err.Error())
 		return err
@@ -86,7 +87,7 @@ func (tc TestContext) AddScorecardCustomPatchFile() error {
 // ReplaceScorecardImagesForDev will replaces the scorecard images in the manifests per dev tag which is built
 // in the CI based on the code changes made.
 func (tc TestContext) ReplaceScorecardImagesForDev() error {
-	err := ReplaceRegexInFile(
+	err := kbutil.ReplaceRegexInFile(
 		filepath.Join(tc.Dir, "config", "scorecard", "patches", "basic.config.yaml"),
 		scorecardImage, scorecardImageReplace,
 	)
@@ -94,7 +95,7 @@ func (tc TestContext) ReplaceScorecardImagesForDev() error {
 		return err
 	}
 
-	err = ReplaceRegexInFile(
+	err = kbutil.ReplaceRegexInFile(
 		filepath.Join(tc.Dir, "config", "scorecard", "patches", "olm.config.yaml"),
 		scorecardImage, scorecardImageReplace,
 	)

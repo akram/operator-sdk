@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	crthandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -44,13 +45,15 @@ var log = logf.Log.WithName("helm.controller")
 // WatchOptions contains the necessary values to create a new controller that
 // manages helm releases in a particular namespace based on a GVK watch.
 type WatchOptions struct {
-	Namespace               string
 	GVK                     schema.GroupVersionKind
 	ManagerFactory          release.ManagerFactory
 	ReconcilePeriod         time.Duration
 	WatchDependentResources bool
 	OverrideValues          map[string]string
+	SuppressOverrideValues  bool
 	MaxConcurrentReconciles int
+	Selector                metav1.LabelSelector
+	DryRunOption            string
 }
 
 // Add creates a new helm operator controller and adds it to the manager
@@ -58,17 +61,15 @@ func Add(mgr manager.Manager, options WatchOptions) error {
 	controllerName := fmt.Sprintf("%v-controller", strings.ToLower(options.GVK.Kind))
 
 	r := &HelmOperatorReconciler{
-		Client:          mgr.GetClient(),
-		EventRecorder:   mgr.GetEventRecorderFor(controllerName),
-		GVK:             options.GVK,
-		ManagerFactory:  options.ManagerFactory,
-		ReconcilePeriod: options.ReconcilePeriod,
-		OverrideValues:  options.OverrideValues,
+		Client:                 mgr.GetClient(),
+		EventRecorder:          mgr.GetEventRecorderFor(controllerName),
+		GVK:                    options.GVK,
+		ManagerFactory:         options.ManagerFactory,
+		ReconcilePeriod:        options.ReconcilePeriod,
+		OverrideValues:         options.OverrideValues,
+		SuppressOverrideValues: options.SuppressOverrideValues,
+		DryRunOption:           options.DryRunOption,
 	}
-
-	// Register the GVK with the schema
-	mgr.GetScheme().AddKnownTypeWithName(options.GVK, &unstructured.Unstructured{})
-	metav1.AddToGroupVersion(mgr.GetScheme(), options.GVK.GroupVersion())
 
 	c, err := controller.New(controllerName, mgr, controller.Options{
 		Reconciler:              r,
@@ -80,7 +81,8 @@ func Add(mgr manager.Manager, options WatchOptions) error {
 
 	o := &unstructured.Unstructured{}
 	o.SetGroupVersionKind(options.GVK)
-	if err := c.Watch(&source.Kind{Type: o}, &libhandler.InstrumentedEnqueueRequestForObject{}); err != nil {
+
+	if err := c.Watch(source.Kind(mgr.GetCache(), client.Object(o), &libhandler.InstrumentedEnqueueRequestForObject[client.Object]{})); err != nil {
 		return err
 	}
 
@@ -89,19 +91,19 @@ func Add(mgr manager.Manager, options WatchOptions) error {
 	}
 
 	log.Info("Watching resource", "apiVersion", options.GVK.GroupVersion(), "kind",
-		options.GVK.Kind, "namespace", options.Namespace, "reconcilePeriod", options.ReconcilePeriod.String())
+		options.GVK.Kind, "reconcilePeriod", options.ReconcilePeriod.String())
 	return nil
 }
 
 // watchDependentResources adds a release hook function to the HelmOperatorReconciler
 // that adds watches for resources in released Helm charts.
 func watchDependentResources(mgr manager.Manager, r *HelmOperatorReconciler, c controller.Controller) {
-	owner := &unstructured.Unstructured{}
-	owner.SetGroupVersionKind(r.GVK)
-
 	var m sync.RWMutex
 	watches := map[schema.GroupVersionKind]struct{}{}
 	releaseHook := func(release *rpb.Release) error {
+		owner := &unstructured.Unstructured{}
+		owner.SetGroupVersionKind(r.GVK)
+		owner.SetNamespace(release.Namespace)
 		resources := releaseutil.SplitManifests(release.Manifest)
 		for _, resource := range resources {
 			var u unstructured.Unstructured
@@ -129,20 +131,28 @@ func watchDependentResources(mgr manager.Manager, r *HelmOperatorReconciler, c c
 				}
 
 				restMapper := mgr.GetRESTMapper()
-				useOwnerRef, err := k8sutil.SupportsOwnerReference(restMapper, owner, dependent)
+				useOwnerRef, err := k8sutil.SupportsOwnerReference(restMapper, owner, dependent, "")
 				if err != nil {
 					return err
 				}
 
 				if useOwnerRef { // Setup watch using owner references.
-					err = c.Watch(&source.Kind{Type: unstructuredObj}, &crthandler.EnqueueRequestForOwner{OwnerType: owner},
-						predicate.DependentPredicate{})
+					err = c.Watch(
+						source.Kind(
+							mgr.GetCache(),
+							client.Object(unstructuredObj),
+							crthandler.TypedEnqueueRequestForOwner[client.Object](mgr.GetScheme(), mgr.GetRESTMapper(), owner, crthandler.OnlyControllerOwner()),
+							predicate.DependentPredicate{}))
 					if err != nil {
 						return err
 					}
 				} else { // Setup watch using annotations.
-					err = c.Watch(&source.Kind{Type: unstructuredObj}, &libhandler.EnqueueRequestForAnnotation{Type: gvkDependent.GroupKind()},
-						predicate.DependentPredicate{})
+					err = c.Watch(
+						source.Kind(
+							mgr.GetCache(),
+							client.Object(unstructuredObj),
+							&libhandler.EnqueueRequestForAnnotation[client.Object]{Type: gvkDependent.GroupKind()},
+							predicate.DependentPredicate{}))
 					if err != nil {
 						return err
 					}

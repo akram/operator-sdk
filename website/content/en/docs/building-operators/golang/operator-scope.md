@@ -19,15 +19,15 @@ as cluster-scoped. For example, the [cert-manager][cert-manager] operator is oft
 permissions and watches so that it can manage and issue certificates for an entire cluster.
 
 **IMPORTANT**: When a [Manager][ctrl-manager] instance is created in the `main.go` file, the
-Namespaces are set via [Manager Options][ctrl-options] as described below. These Namespaces should be watched and
-cached for the Client which is provided by the Manager.Only clients provided by cluster-scoped Managers are able
+Namespaces are set via [Cache Config][cache-config] as described below. These Namespaces should be watched and
+cached for the Client which is provided by the Manager. Only clients provided by cluster-scoped Managers are able
 to manage cluster-scoped CRD's. For further information see: [CRD scope doc][crd-scope-doc].
 
 ## Manager watching options
 
 ### Watching resources in all Namespaces (default)
 
-A [Manager][ctrl-manager] is initialized with no Namespace option specified, or `Namespace: ""` will
+A [Manager][ctrl-manager] is initialized with no Cache option specified, or with a Cache.DefaultNamespaces of `Namespace: ""` will
 watch all Namespaces:
 
 ```go
@@ -42,10 +42,10 @@ mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 ...
 ```
 
-### Watching resources in a single Namespace
+### Watching resources in specific Namespaces
 
-To restrict the scope of the [Manager's][ctrl-manager] cache to a specific Namespace set the `Namespace` field
-in [Options][ctrl-options]:
+To restrict the scope of the [Manager's][ctrl-manager] cache to a specific Namespace, set `Cache.DefaultNamespaces`
+field in [Options][ctrl-options]:
 
 ```go
 ...
@@ -55,19 +55,18 @@ mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
     Port:               9443,
     LeaderElection:     enableLeaderElection,
     LeaderElectionID:   "f1c5ece8.example.com",
-    Namespace:          "operator-namespace",
+    Cache: cache.Options{
+      DefaultNamespaces: map[string]cache.Config{"operator-namespace": cache.Config{}},
+    },
 })
 ...
 ```
 
 ### Watching resources in a set of Namespaces
 
-It is possible to use [`MultiNamespacedCacheBuilder`][multi-namespaced-cache-builder] from
-[Options][ctrl-options] to watch and manage resources in a set of Namespaces:
+It is also possible to use `DefaultNamespaces` to watch and manage resources in a set of Namespaces:
 
 ```go
-...
-namespaces := []string{"foo", "bar"} // List of Namespaces
 ...
 mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
     Scheme:             scheme,
@@ -75,12 +74,20 @@ mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
     Port:               9443,
     LeaderElection:     enableLeaderElection,
     LeaderElectionID:   "f1c5ece8.example.com",
-    NewCache:           cache.MultiNamespacedCacheBuilder(namespaces),
+    Cache: cache.Options{
+      DefaultNamespaces: map[string]cache.Config{
+        "operator-namespace1": cache.Config{},
+        "operator-namespace2": cache.Config{},
+      },
+    },
 })
 ...
 ```
-In the above example, a CR created in a Namespace not in the set passed to `Options` will not be reconciled by
-its controller because the [Manager][ctrl-manager] does not manage that Namespace.
+
+In the above example, a CR created in a Namespace not in the set passed to `Cache.DefaultNamespaces` will not be reconciled by
+its controller because the [Manager][ctrl-manager] does not manage that Namespace. Further restrictions and qualifications
+can created on a per-namespace basis by setting fields in the cache.Config object, for further information see the
+[controller runtime docs][cache-config]
 
 **IMPORTANT:** Note that this is not intended to be used for excluding Namespaces, this is better done via a Predicate.
 
@@ -114,7 +121,7 @@ Update the [`RBAC markers`][rbac-markers] in `<kind>_controller.go` with `namesp
 //+kubebuilder:rbac:groups=cache.example.com,namespace=memcached-operator-system,resources=memcacheds/status,verbs=get;update;patch
 ```
 
-Then run `make manifests` to update `config/rbac/role.yaml`. In our example it would like:
+Then run `make manifests` to update `config/rbac/role.yaml`. In our example it would look like:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -187,7 +194,9 @@ mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
     Port:               9443,
     LeaderElection:     enableLeaderElection,
     LeaderElectionID:   "f1c5ece8.example.com",
-    Namespace:          watchNamespace, // namespaced-scope when the value is not an empty string
+    Cache: cache.Options{
+      DefaultNamespaces: map[string]cache.Config{watchNamespace: cache.Config{}},
+    },
 })
 ...
 ```
@@ -239,7 +248,9 @@ options := ctrl.Options{
     Port:               9443,
     LeaderElection:     enableLeaderElection,
     LeaderElectionID:   "f1c5ece8.example.com",
-    Namespace:          watchNamespace, // namespaced-scope when the value is not an empty string
+    Cache: cache.Options{
+      DefaultNamespaces: map[string]cache.Config{watchNamespace: cache.Config{}},
+    },
 }
 
 // Add support for MultiNamespace set in WATCH_NAMESPACE (e.g ns1,ns2)
@@ -268,7 +279,7 @@ if strings.Contains(watchNamespace, ",") {
 If your operator is [integrated with OLM][olm-integration], you will want to update your [CSV base's][csv-base]
 `spec.installModes` list to support the desired namespacing requirements. Support for multiple types of namespacing
 is allowed, so supporting multiple install modes in a CSV is permitted. After doing so, update your
-[bundle][bundle-quickstart] or [package manifests][packagemanifests-quickstart] by following the linked guides.
+[bundle][bundle-quickstart] or [package manifests][packagemanifests-tutorial] by following the linked guides.
 
 ### Watching resources in all Namespaces (default)
 
@@ -299,16 +310,15 @@ If the operator can watch multiple namespaces, set the following in your `spec.i
     supported: true
 ```
 
+[cache-config]: https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/cache#Config
 [cert-manager]: https://github.com/jetstack/cert-manager
-[ctrl-manager]: https://godoc.org/sigs.k8s.io/controller-runtime/pkg/manager#Manager
-[ctrl-options]: https://godoc.org/sigs.k8s.io/controller-runtime/pkg/manager#Options
-[multi-namespaced-cache-builder]: https://godoc.org/github.com/kubernetes-sigs/controller-runtime/pkg/cache#MultiNamespacedCacheBuilder
+[ctrl-manager]: https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/manager#Manager
+[ctrl-options]: https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/manager#Options
 [k8s-rbac]: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
-[kube-rbac-proxy]: https://github.com/brancz/kube-rbac-proxy
 [rbac-clusterrole]: https://kubernetes.io/docs/reference/access-authn-authz/rbac/#role-and-clusterrole
 [crd-scope-doc]: /docs/building-operators/golang/crds-scope/
 [rbac-markers]: https://book.kubebuilder.io/reference/markers/rbac.html
 [olm-integration]: /docs/olm-integration
 [csv-base]: /docs/olm-integration/generation/#kustomize-files
-[bundle]: /docs/olm-integration/quickstart-bundle
-[packagemanifests-quickstart]: /docs/olm-integration/quickstart-package-manifests
+[bundle-quickstart]: /docs/olm-integration/quickstart-bundle
+[packagemanifests-tutorial]: /docs/olm-integration/tutorial-package-manifests

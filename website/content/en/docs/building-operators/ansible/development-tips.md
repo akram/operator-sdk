@@ -31,22 +31,22 @@ sudo dnf install ansible
 ```
 
 In addition to Ansible, a user must install the
-[OpenShift Restclient Python][openshift-restclient-python] package:
+[Python Kubernetes Client][python-kubernetes-client] package:
 
 ```sh
-pip3 install openshift
+pip3 install kubernetes
 ```
 
 Finally, install the Kubernetes Collection from ansible-galaxy:
 
 ```sh
-ansible-galaxy collection install community.kubernetes
+ansible-galaxy collection install kubernetes.core
 ```
 
 Alternatively, if you've already initialized your operator, you may have a
 `requirements.yml` file at the top level of your project. This file specifies
 Ansible dependencies that need to be installed for your operator to function.
-By default it will install the `community.kubernetes` collection as well as
+By default it will install the `kubernetes.core` collection as well as
 the `operator_sdk.util` collection, which provides modules and plugins for
 operator-specific operations.
 
@@ -75,7 +75,7 @@ we will create and delete a ConfigMap based on the value of a variable named
 ```yaml
 ---
 - name: set ConfigMap example-config to {{ state }}
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     api_version: v1
     kind: ConfigMap
     name: example-config
@@ -118,7 +118,7 @@ PLAY [localhost] ***************************************************************
 TASK [Gathering Facts] *********************************************************************
 ok: [localhost]
 
-Task [memcached : set example-coonfig configmap to present]
+Task [memcached : set ConfigMap example-config to present]
 changed: [localhost]
 
 PLAY RECAP *********************************************************************************
@@ -145,7 +145,7 @@ PLAY [localhost] ***************************************************************
 TASK [Gathering Facts] *********************************************************************
 ok: [localhost]
 
-Task [memcached : set example-config configmap to absent]
+Task [memcached : set ConfigMap example-config to absent]
 changed: [localhost]
 
 PLAY RECAP *********************************************************************************
@@ -162,7 +162,6 @@ No resources found in default namespace.
 ## Using Ansible inside an Operator
 
 Now that we have demonstrated using the Kubernetes Collection, we want to
-
 trigger this Ansible logic when a custom resource changes. In the above
 example, we want to map a role to a specific Kubernetes resource that the
 operator will watch. This mapping is done in a file called `watches.yaml`.
@@ -338,7 +337,7 @@ check the full Ansible result in the logs in order to be able to debug it.
 
 **Example**
 
-In `config/manager/manager.yaml` and `config/default/manager_auth_proxy_patch.yaml`:
+In `config/manager/manager.yaml` and `config/default/manager_metrics_patch.yaml`:
 
 ```yaml
 ...
@@ -510,13 +509,12 @@ operator. The `ansible_operator_meta` fields can be accessed via dot notation in
 [ansible-runner-http-plugin]:https://github.com/ansible/ansible-runner-http
 [ansible-runner-tool]: https://ansible-runner.readthedocs.io/en/latest/install.html
 [k8s_ansible_module]:https://docs.ansible.com/ansible/2.6/modules/k8s_module.html
-[openshift_restclient_python]:https://github.com/openshift/openshift-restclient-python
 [tutorial]:../tutorial
-[kubernetes_collection]: https://galaxy.ansible.com/community/kubernetes
+[kubernetes_collection]: https://galaxy.ansible.com/kubernetes/core
 [manage_status_proposal]:../../proposals/ansible-operator-status.md
-[openshift-restclient-python]: https://github.com/openshift/openshift-restclient-python
 [operator_sdk_util]: https://galaxy.ansible.com/operator_sdk/util
 [passing_extra_vars]: https://docs.ansible.com/ansible/latest/user_guide/playbooks_variables.html#passing-variables-on-the-command-line
+[python-kubernetes-client]: https://github.com/kubernetes-client/python
 [time_pkg]:https://golang.org/pkg/time/
 [time_parse_duration]:https://golang.org/pkg/time/#ParseDuration
 [watches]:/docs/building-operators/ansible/reference/watches

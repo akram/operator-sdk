@@ -26,7 +26,7 @@ Note: Make sure to first check the prerequisites that can be found in the main R
 
 #### What did you see instead? Under which circumstances?
 
-<!-- A clear and concise description of what you expected to happen (or insert a code snippet). -->
+<!-- A clear and concise description of what ACTUALLY happened (or insert a code snippet). -->
 
 #### Environment
 
@@ -35,7 +35,7 @@ Note: Make sure to first check the prerequisites that can be found in the main R
 <!-- Uncomment one or more of the following lines corresponding to the language of the operator type -->
 
 <!-- /language go -->
-<!-- /language ansible -->
+<!-- /language ansible - For ansible operator related bugs, please create the issue in https://github.com/operator-framework/ansible-operator-plugins -->
 <!-- /language helm -->
 
 **Kubernetes cluster type:**

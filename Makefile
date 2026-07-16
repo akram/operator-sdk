@@ -1,20 +1,22 @@
 SHELL = /bin/bash
 
-# IMAGE_VERSION represents the ansible-operator, helm-operator, and scorecard subproject versions.
+# IMAGE_VERSION represents the helm-operator, and scorecard subproject versions.
 # This value must be updated to the release tag of the most recent release, a change that must
 # occur in the release commit. IMAGE_VERSION will be removed once each subproject that uses this
 # version is moved to a separate repo and release process.
-export IMAGE_VERSION = v1.6.1
+export IMAGE_VERSION = v1.42.3
 # Build-time variables to inject into binaries
-export SIMPLE_VERSION = $(shell (test "$(shell git describe)" = "$(shell git describe --abbrev=0)" && echo $(shell git describe)) || echo $(shell git describe --abbrev=0)+git)
+export SIMPLE_VERSION = $(shell (test "$(shell git describe --tags)" = "$(shell git describe --tags --abbrev=0)" && echo $(shell git describe --tags)) || echo $(shell git describe --tags --abbrev=0)+git)
 export GIT_VERSION = $(shell git describe --dirty --tags --always)
 export GIT_COMMIT = $(shell git rev-parse HEAD)
-export K8S_VERSION = 1.19.4
+export K8S_VERSION = 1.33.1
+export KIND_VERSION = 0.29.0
 
 # Build settings
 export TOOLS_DIR = tools/bin
 export SCRIPTS_DIR = tools/scripts
-REPO = $(shell go list -m)
+GO := $(shell type -P go)
+REPO = $(shell $(GO) list -m)
 BUILD_DIR = build
 GO_ASMFLAGS = -asmflags "all=-trimpath=$(shell dirname $(PWD))"
 GO_GCFLAGS = -gcflags "all=-trimpath=$(shell dirname $(PWD))"
@@ -27,6 +29,8 @@ GO_BUILD_ARGS = \
     -X '$(REPO)/internal/version.KubernetesVersion=v$(K8S_VERSION)' \
     -X '$(REPO)/internal/version.ImageVersion=$(IMAGE_VERSION)' \
   " \
+# containers_image_openpgp for containers/image
+GO_BUILD_TAGS = containers_image_openpgp
 
 export GO111MODULE = on
 export CGO_ENABLED = 0
@@ -36,20 +40,33 @@ export PATH := $(PWD)/$(BUILD_DIR):$(PWD)/$(TOOLS_DIR):$(PATH)
 
 .PHONY: generate
 generate: build # Generate CLI docs and samples
-	go run ./hack/generate/cncf-maintainers/main.go
-	go run ./hack/generate/cli-doc/gen-cli-doc.go
-	go run ./hack/generate/samples/generate_testdata.go
-	go generate ./...
+	rm -rf testdata
+	$(GO) run ./hack/generate/cncf-maintainers/main.go
+	$(GO) run -tags=$(GO_BUILD_TAGS) ./hack/generate/cli-doc/gen-cli-doc.go
+	$(GO) run ./hack/generate/samples/generate_testdata.go
+	$(GO) generate ./...
 
 .PHONY: bindata
-OLM_VERSIONS = 0.16.1 0.15.1 0.17.0
+OLM_VERSIONS = 0.26.0 0.27.0 0.28.0
 bindata: ## Update project bindata
 	./hack/generate/olm_bindata.sh $(OLM_VERSIONS)
+	$(MAKE) fix
 
 .PHONY: fix
 fix: ## Fixup files in the repo.
-	go mod tidy
-	go fmt ./...
+	$(GO) mod tidy
+	$(GO) fmt ./...
+	make setup-lint
+	$(TOOLS_DIR)/golangci-lint run --fix --build-tags $(GO_BUILD_TAGS)
+
+.PHONY: setup-lint
+setup-lint: ## Setup the lint
+	$(SCRIPTS_DIR)/fetch golangci-lint 2.9.0
+
+.PHONY: lint
+lint: setup-lint ## Run the lint check
+	$(TOOLS_DIR)/golangci-lint run --build-tags $(GO_BUILD_TAGS)
+
 
 .PHONY: clean
 clean: ## Cleanup build artifacts and tool binaries.
@@ -57,30 +74,42 @@ clean: ## Cleanup build artifacts and tool binaries.
 
 ##@ Build
 
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
 .PHONY: install
-install: ## Install operator-sdk, ansible-operator, and helm-operator.
-	go install $(GO_BUILD_ARGS) ./cmd/{operator-sdk,ansible-operator,helm-operator}
+install: ## Install operator-sdk and helm-operator.
+	@if [ -z "$(GOBIN)" ]; then \
+		echo "Error: GOBIN is not set"; \
+		exit 1; \
+	fi
+	$(GO) install $(GO_BUILD_ARGS) -tags=$(GO_BUILD_TAGS) ./cmd/{operator-sdk,helm-operator}
 
 .PHONY: build
-build: ## Build operator-sdk, ansible-operator, and helm-operator.
+build: ## Build operator-sdk and helm-operator.
 	@mkdir -p $(BUILD_DIR)
-	go build $(GO_BUILD_ARGS) -o $(BUILD_DIR) ./cmd/{operator-sdk,ansible-operator,helm-operator}
+	$(GO) build $(GO_BUILD_ARGS) -tags=$(GO_BUILD_TAGS) -o $(BUILD_DIR) ./cmd/{operator-sdk,helm-operator}
 
-.PHONY: build/operator-sdk build/ansible-operator build/helm-operator
-build/operator-sdk build/ansible-operator build/helm-operator:
-	go build $(GO_BUILD_ARGS) -o $(BUILD_DIR)/$(@F) ./cmd/$(@F)
+.PHONY: build/operator-sdk build/helm-operator
+build/operator-sdk build/helm-operator:
+	$(GO) build $(GO_BUILD_ARGS) -tags=$(GO_BUILD_TAGS) -o $(BUILD_DIR)/$(@F) ./cmd/$(@F)
 
 # Build scorecard binaries.
 .PHONY: build/scorecard-test build/scorecard-test-kuttl build/custom-scorecard-tests
 build/scorecard-test build/scorecard-test-kuttl build/custom-scorecard-tests:
-	go build $(GO_GCFLAGS) $(GO_ASMFLAGS) -o $(BUILD_DIR)/$(@F) ./images/$(@F)
+	$(GO) build $(GO_GCFLAGS) $(GO_ASMFLAGS) -o $(BUILD_DIR)/$(@F) ./images/$(@F)
 
 ##@ Dev image build
 
 # Convenience wrapper for building all remotely hosted images.
 .PHONY: image-build
-IMAGE_TARGET_LIST = operator-sdk helm-operator ansible-operator scorecard-test scorecard-test-kuttl
+IMAGE_TARGET_LIST = operator-sdk helm-operator scorecard-test scorecard-test-kuttl
 image-build: $(foreach i,$(IMAGE_TARGET_LIST),image/$(i)) ## Build all images.
+
 
 # Build an image.
 BUILD_IMAGE_REPO = quay.io/operator-framework
@@ -92,6 +121,9 @@ image/%: export DOCKER_CLI_EXPERIMENTAL = enabled
 image/%:
 	docker buildx build $(DOCKER_PROGRESS) -t $(BUILD_IMAGE_REPO)/$*:dev -f ./images/$*/Dockerfile --load .
 
+image-base/%: export DOCKER_CLI_EXPERIMENTAL = enabled
+image-base/%:
+	docker buildx build $(DOCKER_PROGRESS) -t $(BUILD_IMAGE_REPO)/$*-base:dev -f ./images/$*/base.Dockerfile --load images/$*
 ##@ Release
 
 .PHONY: release
@@ -99,7 +131,7 @@ release: ## Release target. See 'make -f release/Makefile help' for more informa
 	$(MAKE) -f release/Makefile $@
 
 .PHONY: prerelease
-prerelease: ## Write release commit changes. See 'make -f release/Makefile help' for more information.
+prerelease: generate ## Write release commit changes. See 'make -f release/Makefile help' for more information.
 ifneq ($(RELEASE_VERSION),$(IMAGE_VERSION))
 	$(error "IMAGE_VERSION "$(IMAGE_VERSION)" must be updated to match RELEASE_VERSION "$(RELEASE_VERSION)" prior to creating a release commit")
 endif
@@ -122,57 +154,60 @@ test-sanity: generate fix ## Test repo formatting, linting, etc.
 	git diff --exit-code # fast-fail if generate or fix produced changes
 	./hack/check-license.sh
 	./hack/check-error-log-msg-format.sh
-	go vet ./...
-	$(SCRIPTS_DIR)/fetch golangci-lint 1.31.0 && $(TOOLS_DIR)/golangci-lint run
+	$(GO) vet -tags=$(GO_BUILD_TAGS) ./...
+	make setup-lint
+	make lint
 	git diff --exit-code # diff again to ensure other checks don't change repo
 
 .PHONY: test-docs
 test-docs: ## Test doc links
-	go run ./release/changelog/gen-changelog.go -validate-only
+	$(GO) run ./release/changelog/gen-changelog.go -validate-only
 	git submodule update --init --recursive website/
 	./hack/check-links.sh
 
 .PHONY: test-unit
-TEST_PKGS = $(shell go list ./... | grep -v -E 'github.com/operator-framework/operator-sdk/test/')
+TEST_PKGS = $(shell $(GO) list ./... | grep -v -E 'github.com/operator-framework/operator-sdk/test/')
 test-unit: ## Run unit tests
-	go test -coverprofile=coverage.out -covermode=count -short $(TEST_PKGS)
+	CGO_ENABLED=1 $(GO) test -race -tags=$(GO_BUILD_TAGS) -coverprofile=coverage.out -covermode=atomic -short $(TEST_PKGS)
 
-e2e_tests := test-e2e-go test-e2e-ansible test-e2e-ansible-molecule test-e2e-helm test-e2e-integration
+e2e_tests := test-e2e-go test-e2e-helm test-e2e-integration
 e2e_targets := test-e2e $(e2e_tests)
 .PHONY: $(e2e_targets)
 
 .PHONY: test-e2e-setup
-export KIND_CLUSTER := operator-sdk-e2e
-export KUBEBUILDER_ASSETS := $(PWD)/$(TOOLS_DIR)
-test-e2e-setup: build
-	$(SCRIPTS_DIR)/fetch kind 0.9.0
-	$(SCRIPTS_DIR)/fetch envtest 0.7.0
-	$(SCRIPTS_DIR)/fetch kubectl $(K8S_VERSION) # Install kubectl AFTER envtest because envtest includes its own kubectl binary
+export KIND_CLUSTER := osdk-test
+
+KUBEBUILDER_ASSETS = $(PWD)/$(shell $(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest && $(shell $(GO) env GOPATH)/bin/setup-envtest use $(K8S_VERSION) --bin-dir tools/bin/ -p path)
+test-e2e-setup:: build dev-install cluster-create
+
+.PHONY: cluster-create
+cluster-create::
 	[[ "`$(TOOLS_DIR)/kind get clusters`" =~ "$(KIND_CLUSTER)" ]] || $(TOOLS_DIR)/kind create cluster --image="kindest/node:v$(K8S_VERSION)" --name $(KIND_CLUSTER)
+
+.PHONY: dev-install
+dev-install::
+	$(SCRIPTS_DIR)/fetch kind $(KIND_VERSION)
+	$(SCRIPTS_DIR)/fetch kubectl $(K8S_VERSION) # Install kubectl AFTER envtest because envtest includes its own kubectl binary
 
 .PHONY: test-e2e-teardown
 test-e2e-teardown:
-	$(SCRIPTS_DIR)/fetch kind 0.9.0
+	$(SCRIPTS_DIR)/fetch kind $(KIND_VERSION)
 	$(TOOLS_DIR)/kind delete cluster --name $(KIND_CLUSTER)
 	rm -f $(KUBECONFIG)
 
 # Double colon rules allow repeated rule declarations.
 # Repeated rules are executed in the order they appear.
 $(e2e_targets):: test-e2e-setup image/scorecard-test
-
 test-e2e:: $(e2e_tests) ## Run e2e tests
+
+test-e2e-sample-go:: dev-install cluster-create ## Run Memcached Operator Sample e2e tests
+	make test-e2e -C ./testdata/go/v4/memcached-operator/
 test-e2e-go:: image/custom-scorecard-tests ## Run Go e2e tests
-	go test ./test/e2e/go -v -ginkgo.v
-test-e2e-ansible:: image/ansible-operator ## Run Ansible e2e tests
-	go test -count=1 ./internal/ansible/proxy/...
-	go test ./test/e2e/ansible -v -ginkgo.v
-test-e2e-ansible-molecule:: image/ansible-operator ## Run molecule-based Ansible e2e tests
-	go run ./hack/generate/samples/molecule/generate.go
-	./hack/tests/e2e-ansible-molecule.sh
+	$(GO) test ./test/e2e/go -v -ginkgo.v
 test-e2e-helm:: image/helm-operator ## Run Helm e2e tests
-	go test ./test/e2e/helm -v -ginkgo.v
+	$(GO) test ./test/e2e/helm -v -ginkgo.v
 test-e2e-integration:: ## Run integration tests
-	go test ./test/integration -v -ginkgo.v
+	$(GO) test ./test/integration -v -ginkgo.v
 	./hack/tests/subcommand-olm-install.sh
 
 .DEFAULT_GOAL := help

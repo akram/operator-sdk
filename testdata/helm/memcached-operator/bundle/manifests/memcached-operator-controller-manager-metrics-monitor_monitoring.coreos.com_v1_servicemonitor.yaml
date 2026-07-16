@@ -2,6 +2,8 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: memcached-operator
     control-plane: controller-manager
   name: memcached-operator-controller-manager-metrics-monitor
 spec:
@@ -14,4 +16,5 @@ spec:
       insecureSkipVerify: true
   selector:
     matchLabels:
+      app.kubernetes.io/name: memcached-operator
       control-plane: controller-manager

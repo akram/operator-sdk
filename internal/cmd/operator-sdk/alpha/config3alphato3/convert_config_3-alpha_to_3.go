@@ -18,14 +18,14 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"io/ioutil"
+	"os"
 	"path"
 	"regexp"
 	"strings"
 	"text/template"
 
 	"golang.org/x/mod/modfile"
-	"sigs.k8s.io/kubebuilder/v3/pkg/model/resource"
+	"sigs.k8s.io/kubebuilder/v4/pkg/model/resource"
 	"sigs.k8s.io/yaml"
 )
 
@@ -42,7 +42,7 @@ type templObj struct {
 // convertConfig3AlphaTo3 returns cfgBytes converted to 3 iff cfgBytes is version 3-alpha.
 func convertConfig3AlphaTo3(cfgBytes []byte) (_ []byte, err error) {
 	tObj := templObj{}
-	cfgObj := make(map[string]interface{}, 5)
+	cfgObj := make(map[string]any, 5)
 	if err := yaml.Unmarshal(cfgBytes, &cfgObj); err != nil {
 		return nil, err
 	}
@@ -66,14 +66,19 @@ func convertConfig3AlphaTo3(cfgBytes []byte) (_ []byte, err error) {
 	isMultigroup := hasMultigroup && multigroupObj.(bool)
 
 	if obj, hasRes := cfgObj["resources"]; hasRes {
-		domain := cfgObj["domain"].(string)
-		resObjs := obj.([]interface{})
+		// Default to empty domain if no domain information is found.
+		domain := ""
+		if domainObj, ok := cfgObj["domain"]; ok {
+			domain = domainObj.(string)
+		}
+
+		resObjs := obj.([]any)
 		resources := make([]resource.Resource, len(resObjs))
 
 		for i, resObj := range resObjs {
 			resources[i].Domain = domain
 
-			res := resObj.(map[string]interface{})
+			res := resObj.(map[string]any)
 			if groupObj, ok := res["group"]; ok {
 				resources[i].Group = groupObj.(string)
 			}
@@ -88,7 +93,7 @@ func convertConfig3AlphaTo3(cfgBytes []byte) (_ []byte, err error) {
 				// Only Go projects use "resources[*].path".
 				var apiPath string
 				if isMultigroup {
-					apiPath = path.Join("apis", resources[i].Group, resources[i].Version)
+					apiPath = path.Join("api", resources[i].Group, resources[i].Version)
 				} else {
 					apiPath = path.Join("api", resources[i].Version)
 				}
@@ -155,7 +160,7 @@ func convertConfig3AlphaTo3(cfgBytes []byte) (_ []byte, err error) {
 
 // Make this a var so it can be mocked in tests.
 var getModulePath = func() (string, error) {
-	b, err := ioutil.ReadFile("go.mod")
+	b, err := os.ReadFile("go.mod")
 	return modfile.ModulePath(b), err
 }
 

@@ -15,8 +15,7 @@
 package config3alphato3
 
 import (
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/format"
 )
@@ -36,6 +35,7 @@ var _ = Describe("ConvertConfig3AlphaTo3", func() {
 		Entry("no resources", noResourcesConfig, noResourcesConfigExp),
 		Entry("basic", basicConfig, basicConfigExp),
 		Entry("complex", complexConfig, complexConfigExp),
+		Entry("no domain", noDomainConfig, noDomainConfigExp),
 	)
 })
 
@@ -66,6 +66,30 @@ resources:
   version: v1alpha1
 version: "3"
 `
+)
+
+const (
+	noDomainConfig = `layout: ansible.sdk.operatorframework.io/v1
+projectName: memcached-operator
+resources:
+- crdVersion: v1
+  group: cache
+  kind: Memcached
+  version: v1alpha1
+version: 3-alpha`
+	noDomainConfigExp = `layout: ansible.sdk.operatorframework.io/v1
+projectName: memcached-operator
+resources:
+- api:
+    crdVersion: v1
+    # TODO(user): Uncomment the below line if this resource's CRD is namespace scoped, else delete it.
+    # namespaced: true
+  # TODO(user): Uncomment the below line if this resource implements a controller, else delete it.
+  # controller: true
+  group: cache
+  kind: Memcached
+  version: v1alpha1
+version: "3"`
 )
 
 const (

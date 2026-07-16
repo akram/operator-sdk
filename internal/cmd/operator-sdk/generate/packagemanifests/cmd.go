@@ -55,7 +55,11 @@ func NewCmd() *cobra.Command {
 	c := &packagemanifestsCmd{}
 
 	cmd := &cobra.Command{
-		Use:     "packagemanifests",
+		Use: "packagemanifests",
+		Deprecated: "support for the packagemanifests format will be removed in operator-sdk v2.0.0. Use bundles " +
+			"to package your operator instead. Migrate your packagemanifest to a bundle using " +
+			"'operator-sdk pkgman-to-bundle' command. Run 'operator-sdk pkgman-to-bundle --help' " +
+			"for more details.",
 		Short:   "Generates package manifests data for the operator",
 		Long:    longHelp,
 		Example: examples,
@@ -107,8 +111,8 @@ func (c *packagemanifestsCmd) addFlagsTo(fs *pflag.FlagSet) {
 	fs.StringVar(&c.packageName, "package", "", "Package name")
 }
 
-func (c packagemanifestsCmd) println(a ...interface{}) {
-	if !(c.quiet || c.stdout) {
+func (c packagemanifestsCmd) println(a ...any) {
+	if !c.quiet && !c.stdout {
 		fmt.Println(a...)
 	}
 }

@@ -17,11 +17,11 @@ package bundleutil
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/template"
 
 	log "github.com/sirupsen/logrus"
@@ -45,7 +45,7 @@ type BundleMetaData struct {
 	// The PackageName of the operator bundle.
 	PackageName string
 
-	// Channels and DefaultChannel the operator shoud be subscribed to.
+	// Channels and DefaultChannel the operator should be subscribed to.
 	Channels       string
 	DefaultChannel string
 
@@ -106,11 +106,13 @@ func (meta *BundleMetaData) GenerateMetadata() error {
 	}
 
 	dockerfilePath := defaultBundleDockerfilePath
-	// If migrating from packagemanifests to bundle, bundle.Docker file is present
-	// inside bundleDir, else its in the project directory.
-	// Remmove this, when pkgman-to-bundle migrate command is removed.
+	// If migrating from packagemanifests to bundle, bundle.Dockerfile is present
+	// inside bundleDir, else it's in the project directory. Hence, dockerfile
+	// should have the path specified with respect to output directory of resulting bundles.
+	// Remove this, when pkgman-to-bundle migrate command is removed.
 	if len(meta.PkgmanifestPath) != 0 {
-		dockerfilePath = filepath.Join(meta.BundleDir, "bundle.Dockerfile")
+		dockerfilePath = filepath.Join(filepath.Dir(meta.BundleDir), "bundle.Dockerfile")
+		values.BundleDir = filepath.Base(meta.BundleDir)
 	}
 
 	templateMap := map[string]*template.Template{
@@ -134,7 +136,7 @@ func (meta *BundleMetaData) GenerateMetadata() error {
 			return err
 		}
 	}
-	log.Infof("Bundle metadata generated suceessfully")
+	log.Infof("Bundle metadata generated successfully")
 	return nil
 }
 
@@ -153,7 +155,7 @@ func copyOperatorManifests(src, dest string) error {
 		return err
 	}
 
-	srcFiles, err := ioutil.ReadDir(src)
+	srcFiles, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
@@ -164,7 +166,7 @@ func copyOperatorManifests(src, dest string) error {
 
 		if f.IsDir() {
 			// TODO(verify): we may have to log an error here instead of recursively copying
-			// if there are no subfolders allowed under manifests dir of a packagemanifest.
+			// if there are no sub-folders allowed under manifests dir of a packagemanifest.
 			if err = copyOperatorManifests(srcPath, destPath); err != nil {
 				return err
 			}
@@ -196,16 +198,40 @@ func (meta *BundleMetaData) BuildBundleImage(tag string) error {
 
 	img := fmt.Sprintf("%s:%s", meta.BaseImage, tag)
 
+	// switch back to current working directory, so that subsequent
+	// bundle version images can be built.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			log.Error(cwd)
+		}
+	}()
+
+	if err := os.Chdir(filepath.Dir(meta.BundleDir)); err != nil {
+		return err
+	}
+
 	if len(meta.BuildCommand) != 0 {
 		// TODO(varsha): Make this more user friendly by accepting a template which
 		// can executed in each bundle subdirectory.
-		log.Infof("Using the specified command to build image %s", img)
-		cmd := exec.Command(meta.BuildCommand, img)
-		if err := cmd.Run(); err != nil {
+		log.Infof("Using the specified command to build image")
+		commandArg := strings.Split(meta.BuildCommand, " ")
+
+		// append the tag and build context to the command
+		cmd := exec.Command(commandArg[0], append(commandArg[1:], img)...)
+		output, err := cmd.CombinedOutput()
+		if err != nil || viper.GetBool(flags.VerboseOpt) {
+			fmt.Println(string(output))
+		}
+		if err != nil {
 			return err
 		}
 	} else {
-		output, err := exec.Command("docker", "build", "-f", filepath.Join(meta.BundleDir, "bundle.Dockerfile"), "-t", img, ".").CombinedOutput()
+		output, err := exec.Command("docker", "build", "-f", "bundle.Dockerfile", "-t", img, ".").CombinedOutput()
 		if err != nil || viper.GetBool(flags.VerboseOpt) {
 			fmt.Println(string(output))
 		}
@@ -235,12 +261,12 @@ func (meta *BundleMetaData) WriteScorecardConfig(inputConfigPath string) error {
 	}
 
 	log.Info(fmt.Sprintf("Writing scorecard config in %s", scorecardDir))
-	b, err := ioutil.ReadFile(inputConfigPath)
+	b, err := os.ReadFile(inputConfigPath)
 	if err != nil {
 		return err
 	}
 
-	err = ioutil.WriteFile(filepath.Join(scorecardDir, "config.yaml"), b, 0644)
+	err = os.WriteFile(filepath.Join(scorecardDir, "config.yaml"), b, 0644)
 	if err != nil {
 		return fmt.Errorf("error writing scorecard config %v", err)
 	}

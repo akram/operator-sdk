@@ -15,7 +15,7 @@
 package metrics
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -36,6 +36,10 @@ var _ = Describe("SDK Label helper functions", func() {
 			output := parseVersion(version)
 			Expect(output).To(Equal("v0.18.0+git"))
 		})
-
+		It("should return unknown", func() {
+			version := "noneSemanticVersion"
+			output := parseVersion(version)
+			Expect(output).To(Equal("unknown"))
+		})
 	})
 })

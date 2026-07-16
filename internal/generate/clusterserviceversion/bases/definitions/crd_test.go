@@ -18,22 +18,23 @@ import (
 	"math/rand"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"sigs.k8s.io/controller-tools/pkg/crd"
 	"sigs.k8s.io/controller-tools/pkg/loader"
 	"sigs.k8s.io/controller-tools/pkg/markers"
-	"sigs.k8s.io/kubebuilder/v3/test/e2e/utils"
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
 )
 
 var _ = Describe("getTypedDescriptors", func() {
 	var (
 		markedFields map[crd.TypeIdent][]*fieldInfo
-		out          []interface{}
+		out          []any
 	)
 
 	BeforeEach(func() {
@@ -42,14 +43,14 @@ var _ = Describe("getTypedDescriptors", func() {
 
 	It("handles an empty set of marked fields", func() {
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.SpecDescriptor{}), spec)
-		Expect(out).To(HaveLen(0))
+		Expect(out).To(BeEmpty())
 	})
 	It("returns one spec descriptor for one spec marker on a field", func() {
 		markedFields[crd.TypeIdent{}] = []*fieldInfo{
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{
+						"": []any{
 							Descriptor{"spec", "Foo", []string{"urn:alm:descriptor:com.tectonic.ui:text"}, nil},
 						},
 					},
@@ -58,7 +59,7 @@ var _ = Describe("getTypedDescriptors", func() {
 		}
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.SpecDescriptor{}), spec)
 		Expect(out).To(HaveLen(1))
-		Expect(out).To(BeEquivalentTo([]interface{}{
+		Expect(out).To(BeEquivalentTo([]any{
 			v1alpha1.SpecDescriptor{
 				DisplayName:  "Foo",
 				XDescriptors: []string{"urn:alm:descriptor:com.tectonic.ui:text"},
@@ -70,7 +71,7 @@ var _ = Describe("getTypedDescriptors", func() {
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{
+						"": []any{
 							Descriptor{"status", "Foo", []string{"urn:alm:descriptor:com.tectonic.ui:text"}, nil},
 						},
 					},
@@ -78,14 +79,14 @@ var _ = Describe("getTypedDescriptors", func() {
 			},
 		}
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.SpecDescriptor{}), spec)
-		Expect(out).To(HaveLen(0))
+		Expect(out).To(BeEmpty())
 	})
 	It("returns one status descriptor for one status marker on a field", func() {
 		markedFields[crd.TypeIdent{}] = []*fieldInfo{
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{
+						"": []any{
 							Descriptor{"status", "Foo", []string{"urn:alm:descriptor:com.tectonic.ui:text"}, nil},
 						},
 					},
@@ -94,7 +95,7 @@ var _ = Describe("getTypedDescriptors", func() {
 		}
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.StatusDescriptor{}), status)
 		Expect(out).To(HaveLen(1))
-		Expect(out).To(BeEquivalentTo([]interface{}{
+		Expect(out).To(BeEquivalentTo([]any{
 			v1alpha1.StatusDescriptor{
 				DisplayName:  "Foo",
 				XDescriptors: []string{"urn:alm:descriptor:com.tectonic.ui:text"},
@@ -106,7 +107,7 @@ var _ = Describe("getTypedDescriptors", func() {
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{
+						"": []any{
 							Descriptor{"spec", "Foo", nil, nil},
 							Descriptor{"spec", "", nil, intPtr(2)},
 							Descriptor{"spec", "", []string{"urn:alm:descriptor:com.tectonic.ui:text"}, nil},
@@ -119,7 +120,7 @@ var _ = Describe("getTypedDescriptors", func() {
 		}
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.SpecDescriptor{}), spec)
 		Expect(out).To(HaveLen(1))
-		Expect(out).To(BeEquivalentTo([]interface{}{
+		Expect(out).To(BeEquivalentTo([]any{
 			v1alpha1.SpecDescriptor{
 				DisplayName:  "Foo",
 				XDescriptors: []string{"urn:alm:descriptor:com.tectonic.ui:text"},
@@ -132,7 +133,7 @@ var _ = Describe("getTypedDescriptors", func() {
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{Descriptor{"spec", "Foo", nil, intPtr(1)}},
+						"": []any{Descriptor{"spec", "Foo", nil, intPtr(1)}},
 					},
 				},
 				pathSegments: []string{"foo"},
@@ -140,7 +141,7 @@ var _ = Describe("getTypedDescriptors", func() {
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{Descriptor{"spec", "Bar", nil, intPtr(0)}},
+						"": []any{Descriptor{"spec", "Bar", nil, intPtr(0)}},
 					},
 				},
 				pathSegments: []string{"bar"},
@@ -148,7 +149,7 @@ var _ = Describe("getTypedDescriptors", func() {
 		}
 		out = getTypedDescriptors(markedFields, reflect.TypeOf(v1alpha1.SpecDescriptor{}), spec)
 		Expect(out).To(HaveLen(2))
-		Expect(out).To(BeEquivalentTo([]interface{}{
+		Expect(out).To(BeEquivalentTo([]any{
 			v1alpha1.SpecDescriptor{DisplayName: "Bar", Path: "bar"},
 			v1alpha1.SpecDescriptor{DisplayName: "Foo", Path: "foo"},
 		}))
@@ -165,16 +166,17 @@ func intPtr(i int) *int { return &i }
 
 // makeMockMarkedFields returns a randomly generated mock marked field set,
 // and the expected sorted set of descriptors.
-func makeMockMarkedFields() (markedFields map[crd.TypeIdent][]*fieldInfo, expected []interface{}) {
+func makeMockMarkedFields() (markedFields map[crd.TypeIdent][]*fieldInfo, expected []any) {
 	descBuckets := make(map[int][]v1alpha1.SpecDescriptor, 100)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	markedFields = make(map[crd.TypeIdent][]*fieldInfo, 100)
 	for i := 0; i < 100; i++ {
-		s, err := utils.RandomSuffix()
+		s, err := kbutil.RandomSuffix()
 		if err != nil {
 			panic(err)
 		}
-		name := strings.Title(s)
+		caser := cases.Title(language.AmericanEnglish)
+		name := caser.String(s)
 		order := r.Int() % 200 // Very likely to get one conflict.
 		ident := crd.TypeIdent{Package: &loader.Package{}, Name: name}
 		if _, hasName := markedFields[ident]; hasName {
@@ -184,7 +186,7 @@ func makeMockMarkedFields() (markedFields map[crd.TypeIdent][]*fieldInfo, expect
 			{
 				FieldInfo: markers.FieldInfo{
 					Markers: markers.MarkerValues{
-						"": []interface{}{Descriptor{"spec", name, nil, intPtr(order)}},
+						"": []any{Descriptor{"spec", name, nil, intPtr(order)}},
 					},
 				},
 				pathSegments: []string{s},

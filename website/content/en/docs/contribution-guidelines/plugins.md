@@ -18,7 +18,7 @@ The specific files for each language are scaffolded for the language's plugins. 
 operator-sdk init --plugins=kustomize
 ```
 
-Also, see the topic [Language-based Plugins][kb-language-plugins] to understand how it works.
+Also, see the topic [External Plugins][kb-language-plugins] to understand how it works.
 
 ### Common scaffolds 
 
@@ -63,7 +63,7 @@ If you are looking to develop similar solutions to allow users for example to cr
 
 [kb-plugins-doc]: https://master.book.kubebuilder.io/plugins/plugins.html
 [kb-int-sdk]: https://github.com/kubernetes-sigs/kubebuilder/blob/master/designs/integrating-kubebuilder-and-osdk.md
-[kb-language-plugins]:https://master.book.kubebuilder.io/plugins/creating-plugins.html#language-based-plugins
+[kb-language-plugins]: https://book.kubebuilder.io/plugins/extending/external-plugins
 [kustomize]: https://github.com/kubernetes-sigs/kustomize
 [bundle]: https://github.com/operator-framework/operator-registry/blob/v1.16.1/docs/design/operator-bundle.md#operator-bundle
 [kb-project]: https://master.book.kubebuilder.io/reference/project-config.html
@@ -72,9 +72,9 @@ If you are looking to develop similar solutions to allow users for example to cr
 [plugin-manifest]: https://github.com/operator-framework/operator-sdk/tree/master/internal/plugins/manifests/v2
 [plugin-scorecard]: https://github.com/operator-framework/operator-sdk/tree/master/internal/plugins/scorecard/v2
 [kubebuilder-declarative-pattern]: https://github.com/kubernetes-sigs/kubebuilder-declarative-pattern
-[kubebuilder-declarative-pattern-example]: https://github.com/kubernetes-sigs/kubebuilder/blob/master/testdata/project-v3/controllers/firstmate_controller.go
-[default-scaffold]: https://github.com/kubernetes-sigs/kubebuilder/blob/master/testdata/project-v3/controllers/admiral_controller.go
+[kubebuilder-declarative-pattern-example]: https://github.com/kubernetes-sigs/kubebuilder/blob/v3.13.0/testdata/project-v3/controllers/firstmate_controller.go
+[default-scaffold]: https://github.com/kubernetes-sigs/kubebuilder/blob/v3.13.0/testdata/project-v3/controllers/admiral_controller.go
 [kb-issue]: https://github.com/kubernetes-sigs/kubebuilder/issues/1378
-[create-your-own-plugins]: https://master.book.kubebuilder.io/plugins/creating-plugins.html
-[scorecard]: /docs/advanced-topics/scorecard/scorecard/
+[create-your-own-plugins]: https://book.kubebuilder.io/plugins/extending
+[scorecard]: /docs/testing-operators/scorecard/
 [kubebuilder]: https://github.com/kubernetes-sigs/kubebuilder 

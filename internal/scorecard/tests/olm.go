@@ -47,7 +47,7 @@ const (
 )
 
 // BundleValidationTest validates an on-disk bundle
-func BundleValidationTest(bundleRoot string, metadata registryutil.Labels) scapiv1alpha3.TestStatus {
+func BundleValidationTest(bundleRoot string, metadata registryutil.LabelsMap) scapiv1alpha3.TestStatus {
 	r := scapiv1alpha3.TestResult{}
 	r.Name = OLMBundleValidationTest
 	r.State = scapiv1alpha3.PassState
@@ -98,7 +98,7 @@ func BundleValidationTest(bundleRoot string, metadata registryutil.Labels) scapi
 		return wrapResult(r)
 	}
 
-	objs := []interface{}{bundle, bundle.CSV}
+	objs := []any{bundle, bundle.CSV}
 	for _, crd := range bundle.V1CRDs {
 		objs = append(objs, crd)
 	}
@@ -175,7 +175,7 @@ func CRDsHaveResourcesTest(bundle *apimanifests.Bundle) scapiv1alpha3.TestStatus
 func CheckResources(crd operatorsv1alpha1.CustomResourceDefinitions,
 	r scapiv1alpha3.TestResult) scapiv1alpha3.TestResult {
 	for _, description := range crd.Owned {
-		if description.Resources == nil || len(description.Resources) == 0 {
+		if len(description.Resources) == 0 {
 			r.State = scapiv1alpha3.FailState
 			r.Errors = append(r.Errors, "Owned CRDs do not have resources specified")
 			return r
@@ -234,24 +234,40 @@ func checkCSVDescriptors(bundle *apimanifests.Bundle, r scapiv1alpha3.TestResult
 func checkOwnedCSVStatusDescriptor(cr unstructured.Unstructured, csv *operatorsv1alpha1.ClusterServiceVersion,
 	r scapiv1alpha3.TestResult) scapiv1alpha3.TestResult {
 
-	var crd *operatorsv1alpha1.CRDDescription
+	var crdDescription *operatorsv1alpha1.CRDDescription
 
 	for _, owned := range csv.Spec.CustomResourceDefinitions.Owned {
-		if owned.Kind == cr.GetKind() {
-			crd = &owned
+		if owned.Kind == cr.GetKind() && owned.Version == cr.GroupVersionKind().Version {
+			crdDescription = &owned
 			break
 		}
 	}
 
-	if crd == nil {
+	if crdDescription == nil {
 		msg := fmt.Sprintf("Failed to find an owned CRD for CR %s with GVK %s", cr.GetName(), cr.GroupVersionKind().String())
 		r.Errors = append(r.Errors, msg)
 		r.State = scapiv1alpha3.FailState
 		return r
 	}
 
-	if len(crd.StatusDescriptors) == 0 {
-		r.Errors = append(r.Errors, fmt.Sprintf("%s does not have a status descriptor", crd.Name))
+	hasStatusDefinition := false
+	if status, ok := cr.Object["status"].(map[string]any); ok {
+		// Ensure that has no empty keys
+		hasStatusDefinition = len(status) > 0
+	}
+
+	if !hasStatusDefinition {
+		r.Suggestions = append(r.Suggestions, fmt.Sprintf("%s does not have status spec. Note that "+
+			"all objects that represent a physical resource whose state may vary from the user's desired "+
+			"intent SHOULD have a spec and a status. "+
+			"More info: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#spec-and-status", crdDescription.Name))
+	}
+
+	if hasStatusDefinition && len(crdDescription.StatusDescriptors) == 0 {
+		r.Errors = append(r.Errors, fmt.Sprintf("%s does not have a status descriptor", crdDescription.Name))
+		r.Suggestions = append(r.Suggestions, fmt.Sprintf("add status descriptor for the crd %s. "+
+			"If your project is built using Golang you can use the csv markers. "+
+			"More info: https://sdk.operatorframework.io/docs/building-operators/golang/references/markers/", crdDescription.Name))
 		r.State = scapiv1alpha3.FailState
 	}
 
@@ -263,16 +279,18 @@ func checkOwnedCSVStatusDescriptor(cr unstructured.Unstructured, csv *operatorsv
 // I don't think it will be validated.
 func checkOwnedCSVSpecDescriptors(cr unstructured.Unstructured, csv *operatorsv1alpha1.ClusterServiceVersion,
 	r scapiv1alpha3.TestResult) scapiv1alpha3.TestResult {
-	if cr.Object[specDescriptor] == nil {
+	block, ok := cr.Object[specDescriptor].(map[string]any)
+	if !ok {
+		// A nil spec, or a spec that isn't a JSON object (for example a scalar
+		// or array coming from a malformed alm-examples CR), has no descriptor
+		// fields to check, so treat it the same as a missing spec.
 		r.State = scapiv1alpha3.FailState
 		return r
 	}
 
-	block := cr.Object[specDescriptor].(map[string]interface{})
-
 	var crd *operatorsv1alpha1.CRDDescription
 	for _, owned := range csv.Spec.CustomResourceDefinitions.Owned {
-		if owned.Kind == cr.GetKind() {
+		if owned.Kind == cr.GetKind() && owned.Version == cr.GroupVersionKind().Version {
 			crd = &owned
 			break
 		}
@@ -342,8 +360,7 @@ func isCRFromCRDApi(cr unstructured.Unstructured, crds []*apiextv1.CustomResourc
 				continue
 			}
 			failed := false
-			if cr.Object["spec"] != nil {
-				spec := cr.Object["spec"].(map[string]interface{})
+			if spec, ok := cr.Object["spec"].(map[string]any); ok {
 				for key := range spec {
 					if _, ok := version.Schema.OpenAPIV3Schema.Properties["spec"].Properties[key]; !ok {
 						failed = true
@@ -353,8 +370,7 @@ func isCRFromCRDApi(cr unstructured.Unstructured, crds []*apiextv1.CustomResourc
 					}
 				}
 			}
-			if cr.Object["status"] != nil {
-				status := cr.Object["status"].(map[string]interface{})
+			if status, ok := cr.Object["status"].(map[string]any); ok {
 				for key := range status {
 					if _, ok := version.Schema.OpenAPIV3Schema.Properties["status"].Properties[key]; !ok {
 						failed = true

@@ -17,15 +17,11 @@ package release
 import (
 	"fmt"
 
-	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/kube"
 	helmrelease "helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/storage"
-	"helm.sh/helm/v3/pkg/storage/driver"
 	"helm.sh/helm/v3/pkg/strvals"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	crmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/operator-framework/operator-sdk/internal/helm/client"
@@ -37,39 +33,24 @@ import (
 // improves decoupling between reconciliation logic and the Helm backend
 // components used to manage releases.
 type ManagerFactory interface {
-	NewManager(r *unstructured.Unstructured, overrideValues map[string]string) (Manager, error)
+	NewManager(r *unstructured.Unstructured, overrideValues map[string]string, dryRunOption string) (Manager, error)
 }
 
 type managerFactory struct {
 	mgr      crmanager.Manager
+	acg      client.ActionConfigGetter
 	chartDir string
 }
 
 // NewManagerFactory returns a new Helm manager factory capable of installing and uninstalling releases.
-func NewManagerFactory(mgr crmanager.Manager, chartDir string) ManagerFactory {
-	return &managerFactory{mgr, chartDir}
+func NewManagerFactory(mgr crmanager.Manager, acg client.ActionConfigGetter, chartDir string) ManagerFactory {
+	return &managerFactory{mgr, acg, chartDir}
 }
 
-func (f managerFactory) NewManager(cr *unstructured.Unstructured, overrideValues map[string]string) (Manager, error) {
-	// Get both v2 and v3 storage backends
-	clientv1, err := v1.NewForConfig(f.mgr.GetConfig())
+func (f managerFactory) NewManager(cr *unstructured.Unstructured, overrideValues map[string]string, dryRunOption string) (Manager, error) {
+	actionConfig, err := f.acg.ActionConfigFor(cr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get core/v1 client: %w", err)
-	}
-	storageBackend := storage.Init(driver.NewSecrets(clientv1.Secrets(cr.GetNamespace())))
-
-	// Get the necessary clients and client getters. Use a client that injects the CR
-	// as an owner reference into all resources templated by the chart.
-	rcg, err := client.NewRESTClientGetter(f.mgr, cr.GetNamespace())
-	if err != nil {
-		return nil, fmt.Errorf("failed to get REST client getter from manager: %w", err)
-	}
-
-	kubeClient := kube.New(rcg)
-	restMapper := f.mgr.GetRESTMapper()
-	ownerRefClient, err := client.NewOwnerRefInjectingClient(*kubeClient, restMapper, cr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to inject owner references: %w", err)
+		return nil, fmt.Errorf("failed to get helm action config: %w", err)
 	}
 
 	crChart, err := loader.LoadDir(f.chartDir)
@@ -77,12 +58,16 @@ func (f managerFactory) NewManager(cr *unstructured.Unstructured, overrideValues
 		return nil, fmt.Errorf("failed to load chart dir: %w", err)
 	}
 
-	releaseName, err := getReleaseName(storageBackend, crChart.Name(), cr)
+	actionConfig.KubeClient = client.NewLabelInjectingClient(actionConfig.KubeClient, map[string]string{
+		"helm.sdk.operatorframework.io/chart": crChart.Name(),
+	})
+
+	releaseName, err := getReleaseName(actionConfig.Releases, crChart.Name(), cr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get helm release name: %w", err)
 	}
 
-	crValues, ok := cr.Object["spec"].(map[string]interface{})
+	crValues, ok := cr.Object["spec"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("failed to get spec: expected map[string]interface{}")
 	}
@@ -93,24 +78,18 @@ func (f managerFactory) NewManager(cr *unstructured.Unstructured, overrideValues
 	}
 	values := mergeMaps(crValues, expOverrides)
 
-	actionConfig := &action.Configuration{
-		RESTClientGetter: rcg,
-		Releases:         storageBackend,
-		KubeClient:       ownerRefClient,
-		Log:              func(_ string, _ ...interface{}) {},
-	}
-
 	return &manager{
 		actionConfig:   actionConfig,
-		storageBackend: storageBackend,
-		kubeClient:     ownerRefClient,
+		storageBackend: actionConfig.Releases,
+		kubeClient:     actionConfig.KubeClient,
 
 		releaseName: releaseName,
 		namespace:   cr.GetNamespace(),
 
-		chart:  crChart,
-		values: values,
-		status: types.StatusFor(cr),
+		chart:        crChart,
+		values:       values,
+		status:       types.StatusFor(cr),
+		dryRunOption: dryRunOption,
 	}, nil
 }
 
@@ -126,10 +105,11 @@ func (f managerFactory) NewManager(cr *unstructured.Unstructured, overrideValues
 // in the same namespace.
 //
 // TODO(jlanford): As noted above, using the CR name as the release name raises
-//   the possibility of collision. We should move this logic to a validating
-//   admission webhook so that the CR owner receives immediate feedback of the
-//   collision. As is, the only indication of collision will be in the CR status
-//   and operator logs.
+//
+//	the possibility of collision. We should move this logic to a validating
+//	admission webhook so that the CR owner receives immediate feedback of the
+//	collision. As is, the only indication of collision will be in the CR status
+//	and operator logs.
 func getReleaseName(storageBackend *storage.Storage, crChartName string,
 	cr *unstructured.Unstructured) (string, error) {
 	// If a release with the CR name does not exist, return the CR name.
@@ -168,8 +148,8 @@ func releaseHistory(storageBackend *storage.Storage, releaseName string) ([]*hel
 	return releaseHistory, len(releaseHistory) > 0, nil
 }
 
-func parseOverrides(in map[string]string) (map[string]interface{}, error) {
-	out := make(map[string]interface{})
+func parseOverrides(in map[string]string) (map[string]any, error) {
+	out := make(map[string]any)
 	for k, v := range in {
 		val := fmt.Sprintf("%s=%s", k, v)
 		if err := strvals.ParseIntoString(val, out); err != nil {
@@ -179,15 +159,15 @@ func parseOverrides(in map[string]string) (map[string]interface{}, error) {
 	return out, nil
 }
 
-func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(a))
+func mergeMaps(a, b map[string]any) map[string]any {
+	out := make(map[string]any, len(a))
 	for k, v := range a {
 		out[k] = v
 	}
 	for k, v := range b {
-		if v, ok := v.(map[string]interface{}); ok {
+		if v, ok := v.(map[string]any); ok {
 			if bv, ok := out[k]; ok {
-				if bv, ok := bv.(map[string]interface{}); ok {
+				if bv, ok := bv.(map[string]any); ok {
 					out[k] = mergeMaps(bv, v)
 					continue
 				}

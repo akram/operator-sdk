@@ -19,10 +19,9 @@ import (
 	"fmt"
 
 	"github.com/blang/semver/v4"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/operator-framework/api/pkg/lib/version"
-	"github.com/operator-framework/api/pkg/manifests"
 	apimanifests "github.com/operator-framework/api/pkg/manifests"
 	"github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/operator-framework/operator-sdk/internal/olm/client"
@@ -72,10 +71,10 @@ var _ = Describe("Registry", func() {
 				newRegistryService("pkgName", "testns"),
 			).Build()
 			rr := RegistryResources{
-				Pkg: &manifests.PackageManifest{
+				Pkg: &apimanifests.PackageManifest{
 					PackageName: "pkgName",
-					Channels: []manifests.PackageChannel{
-						manifests.PackageChannel{
+					Channels: []apimanifests.PackageChannel{
+						apimanifests.PackageChannel{
 							Name: "pkgChannelTest",
 						},
 					},
@@ -85,10 +84,10 @@ var _ = Describe("Registry", func() {
 						Name: "testbundle",
 						Objects: []*unstructured.Unstructured{
 							{
-								Object: map[string]interface{}{"val1": "val1"},
+								Object: map[string]any{"val1": "val1"},
 							},
 							{
-								Object: map[string]interface{}{"val2": "va2"},
+								Object: map[string]any{"val2": "va2"},
 							},
 						},
 						CSV: &v1alpha1.ClusterServiceVersion{
@@ -105,13 +104,12 @@ var _ = Describe("Registry", func() {
 				},
 			}
 			dep := appsv1.Deployment{}
-			err := rr.Client.KubeClient.Get(context.TODO(), types.NamespacedName{Name: getRegistryServerName("pkgName"), Namespace: "testns"}, &dep)
-			Expect(err).Should(BeNil())
+			Expect(
+				rr.Client.KubeClient.Get(context.TODO(), types.NamespacedName{Name: getRegistryServerName("pkgName"), Namespace: "testns"}, &dep),
+			).Should(Succeed())
+			Expect(rr.DeletePackageManifestsRegistry(context.TODO(), "testns")).Should(Succeed())
 
-			err = rr.DeletePackageManifestsRegistry(context.TODO(), "testns")
-			Expect(err).Should(BeNil())
-
-			err = rr.Client.KubeClient.Get(context.TODO(), types.NamespacedName{Name: "pkgName-registry-server", Namespace: "testns"}, &dep)
+			err := rr.Client.KubeClient.Get(context.TODO(), types.NamespacedName{Name: "pkgName-registry-server", Namespace: "testns"}, &dep)
 			Expect(apierrors.IsNotFound(err)).Should(BeTrue())
 		})
 	})
@@ -134,10 +132,10 @@ var _ = Describe("Registry", func() {
 				newRegistryService("pkgName", testns),
 			).Build()
 			rr = RegistryResources{
-				Pkg: &manifests.PackageManifest{
+				Pkg: &apimanifests.PackageManifest{
 					PackageName: "pkgName",
-					Channels: []manifests.PackageChannel{
-						manifests.PackageChannel{
+					Channels: []apimanifests.PackageChannel{
+						apimanifests.PackageChannel{
 							Name: "pkgChannelTest",
 						},
 					},
@@ -147,10 +145,10 @@ var _ = Describe("Registry", func() {
 						Name: "testbundle",
 						Objects: []*unstructured.Unstructured{
 							{
-								Object: map[string]interface{}{"val1": "val1"},
+								Object: map[string]any{"val1": "val1"},
 							},
 							{
-								Object: map[string]interface{}{"val2": "va2"},
+								Object: map[string]any{"val2": "va2"},
 							},
 						},
 						CSV: &v1alpha1.ClusterServiceVersion{
@@ -170,7 +168,7 @@ var _ = Describe("Registry", func() {
 
 		It("should return true if a deployment exitsts in the registry", func() {
 			temp, err := rr.IsRegistryExist(context.TODO(), testns)
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 
@@ -180,11 +178,10 @@ var _ = Describe("Registry", func() {
 				temp bool
 			)
 
-			err = rr.DeletePackageManifestsRegistry(context.TODO(), testns)
-			Expect(err).Should(BeNil())
+			Expect(rr.DeletePackageManifestsRegistry(context.TODO(), testns)).Should(Succeed())
 
 			temp, err = rr.IsRegistryExist(context.TODO(), testns)
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeFalse())
 		})
 	})
@@ -215,10 +212,10 @@ var _ = Describe("Registry", func() {
 				newRegistryService("pkgName", testns),
 			).Build()
 			rr = RegistryResources{
-				Pkg: &manifests.PackageManifest{
+				Pkg: &apimanifests.PackageManifest{
 					PackageName: "pkgName",
-					Channels: []manifests.PackageChannel{
-						manifests.PackageChannel{
+					Channels: []apimanifests.PackageChannel{
+						apimanifests.PackageChannel{
 							Name: "pkgChannelTest",
 						},
 					},
@@ -229,10 +226,10 @@ var _ = Describe("Registry", func() {
 						Name:    "testbundle",
 						Objects: []*unstructured.Unstructured{
 							{
-								Object: map[string]interface{}{"val1": "val1"},
+								Object: map[string]any{"val1": "val1"},
 							},
 							{
-								Object: map[string]interface{}{"val2": "va2"},
+								Object: map[string]any{"val2": "va2"},
 							},
 						},
 						CSV: &v1alpha1.ClusterServiceVersion{
@@ -254,14 +251,14 @@ var _ = Describe("Registry", func() {
 			rr.Client.KubeClient = fake.NewClientBuilder().Build()
 			temp, err := rr.IsRegistryDataStale(context.TODO(), testns)
 
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 
 		It("should return true if the configmap does not exist", func() {
 			temp, err := rr.IsRegistryDataStale(context.TODO(), testns)
 
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 
@@ -286,7 +283,7 @@ var _ = Describe("Registry", func() {
 			).Build()
 			temp, err := rr.IsRegistryDataStale(context.TODO(), testns)
 
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 
@@ -319,15 +316,15 @@ var _ = Describe("Registry", func() {
 			).Build()
 			temp, err := rr.IsRegistryDataStale(context.TODO(), testns)
 
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 
 		It("should return true if it fails in the next iteration", func() {
-			binarydata, _ := makeObjectBinaryData(&manifests.PackageManifest{
+			binarydata, _ := makeObjectBinaryData(&apimanifests.PackageManifest{
 				PackageName: "pkgName",
-				Channels: []manifests.PackageChannel{
-					manifests.PackageChannel{
+				Channels: []apimanifests.PackageChannel{
+					apimanifests.PackageChannel{
 						Name: "pkgChannelTest",
 					},
 				},
@@ -353,7 +350,7 @@ var _ = Describe("Registry", func() {
 			).Build()
 			temp, err := rr.IsRegistryDataStale(context.TODO(), testns)
 
-			Expect(err).Should(BeNil())
+			Expect(err).ShouldNot(HaveOccurred())
 			Expect(temp).Should(BeTrue())
 		})
 	})

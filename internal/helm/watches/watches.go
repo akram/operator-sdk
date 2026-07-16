@@ -15,13 +15,16 @@
 package watches
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
+	"text/template"
 
+	sprig "github.com/go-task/slim-sprig"
 	"helm.sh/helm/v3/pkg/chartutil"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
@@ -32,9 +35,12 @@ const WatchesFile = "watches.yaml"
 // custom resource.
 type Watch struct {
 	schema.GroupVersionKind `json:",inline"`
-	ChartDir                string            `json:"chart"`
-	WatchDependentResources *bool             `json:"watchDependentResources,omitempty"`
-	OverrideValues          map[string]string `json:"overrideValues,omitempty"`
+	ChartDir                string               `json:"chart"`
+	WatchDependentResources *bool                `json:"watchDependentResources,omitempty"`
+	OverrideValues          map[string]string    `json:"overrideValues,omitempty"`
+	Selector                metav1.LabelSelector `json:"selector"`
+	ReconcilePeriod         metav1.Duration      `json:"reconcilePeriod,omitempty"`
+	DryRunOption            string               `json:"dryRunOption,omitempty"`
 }
 
 // UnmarshalYAML unmarshals an individual watch from the Helm watches.yaml file
@@ -44,7 +50,7 @@ type Watch struct {
 // watches.yaml data. To ensure the correct defaults are applied when loading
 // watches.yaml, use Load() or LoadReader() instead of this function and/or
 // yaml.Unmarshal().
-func (w *Watch) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (w *Watch) UnmarshalYAML(unmarshal func(any) error) error {
 	// by default, the operator will watch dependent resources
 	trueVal := true
 	w.WatchDependentResources = &trueVal
@@ -79,7 +85,7 @@ func Load(path string) ([]Watch, error) {
 // in the watches file, it verifies the configuration. If an error is
 // encountered reading or verifying the configuration, it will be returned.
 func LoadReader(reader io.Reader) ([]Watch, error) {
-	b, err := ioutil.ReadAll(reader)
+	b, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -110,21 +116,34 @@ func LoadReader(reader io.Reader) ([]Watch, error) {
 			trueVal := true
 			w.WatchDependentResources = &trueVal
 		}
-		w.OverrideValues = expandOverrideEnvs(w.OverrideValues)
+		w.OverrideValues, err = expandOverrideValues(w.OverrideValues)
+		if err != nil {
+			return nil, fmt.Errorf("failed to expand override values: %v", err)
+		}
 		watches[i] = w
 	}
 	return watches, nil
 }
 
-func expandOverrideEnvs(in map[string]string) map[string]string {
+func expandOverrideValues(in map[string]string) (map[string]string, error) {
 	if in == nil {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]string)
 	for k, v := range in {
-		out[k] = os.ExpandEnv(v)
+		envV := os.ExpandEnv(v)
+
+		v := &bytes.Buffer{}
+		tmplV, err := template.New(k).Funcs(sprig.TxtFuncMap()).Parse(envV)
+		if err != nil {
+			return nil, fmt.Errorf("invalid template string %q: %v", envV, err)
+		}
+		if err := tmplV.Execute(v, nil); err != nil {
+			return nil, fmt.Errorf("failed to execute template %q: %v", envV, err)
+		}
+		out[k] = v.String()
 	}
-	return out
+	return out, nil
 }
 
 func verifyGVK(gvk schema.GroupVersionKind) error {

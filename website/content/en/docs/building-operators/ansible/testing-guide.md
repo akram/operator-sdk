@@ -13,7 +13,7 @@ To begin, you should have:
 - Docker installed and running
 - [Molecule](https://github.com/ansible/molecule) >= v3.0
 - [Ansible](https://github.com/ansible/ansible) >= v2.9
-- [The OpenShift Python client](https://github.com/openshift/openshift-restclient-python) >= v0.8
+- [The Python Kubernetes client](https://github.com/kubernetes-client/python)
 - An initialized Ansible Operator project, with the molecule directory present.
 
 **NOTE**  If you initialized a project with a previous version of operator-sdk, you can generate a new dummy project and copy in the `molecule` directory. Just be sure to generate the dummy project with the same `api-version` and `kind`, or some of the generated files will not work without modification. Your top-level project structure should look like this:
@@ -48,7 +48,7 @@ Our molecule scenarios have the following basic structure:
 └── verify.yml
 ```
 
-- `molecule.yml` is a configuration file for molecule. It defines what driver to use to stand up an environment and the associated configuration, linting rules, and a variety of other configuration options. For full documentation on the options available here, see the [molecule configuration documentation](https://molecule.readthedocs.io/en/latest/configuration.html)
+- `molecule.yml` is a configuration file for molecule. It defines what driver to use to stand up an environment and the associated configuration, linting rules, and a variety of other configuration options. For full documentation on the options available here, see the [molecule configuration documentation](https://molecule.readthedocs.io/configuration/)
 
 - `prepare.yml` is an Ansible playbook that is run once during the set up of a scenario. You can put any arbitrary Ansible in this playbook. It is used for one-time configuration of your test environment, for example, creating the cluster-wide `CustomResourceDefinition` that your Operator will watch.
 
@@ -203,7 +203,7 @@ We'll be adding the task to `roles/example/tasks/main.yml`, which should now loo
 ---
 # tasks file for exampleapp
 - name: create Example configmap
-  community.kubernetes.k8s:
+  kubernetes.core.k8s:
     definition:
       apiVersion: v1
       kind: ConfigMap
@@ -231,11 +231,11 @@ The file should now look like this:
   tasks:
     - debug: var=cm
       vars:
-        cm: '{{ lookup("community.kubernetes.k8s", api_version="v1", kind="ConfigMap", namespace=namespace, resource_name="test-data") }}'
+        cm: '{{ lookup("kubernetes.core.k8s", api_version="v1", kind="ConfigMap", namespace=namespace, resource_name="test-data") }}'
     - assert:
         that: cm.data.hello == 'world'
       vars:
-        cm: '{{ lookup("community.kubernetes.k8s", api_version="v1", kind="ConfigMap", namespace=namespace, resource_name="test-data") }}'
+        cm: '{{ lookup("kubernetes.core.k8s", api_version="v1", kind="ConfigMap", namespace=namespace, resource_name="test-data") }}'
 ```
 
 Now that we have a functional Operator, and an assertion of its behavior, we can verify that everything is working

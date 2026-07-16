@@ -19,7 +19,7 @@ import (
 	"os/exec"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/operator-framework/operator-sdk/internal/testutils"
@@ -56,11 +56,7 @@ var _ = BeforeSuite(func() {
 	tc.Kubectl.ServiceAccount = fmt.Sprintf("%s-controller-manager", tc.ProjectName)
 
 	By("copying sample to a temporary e2e directory")
-	Expect(exec.Command("cp", "-r", "../../../testdata/go/v3/memcached-operator", tc.Dir).Run()).To(Succeed())
-
-	By("fetching the current-context")
-	tc.Kubectx, err = tc.Kubectl.Command("config", "current-context")
-	Expect(err).NotTo(HaveOccurred())
+	Expect(exec.Command("cp", "-r", "../../../testdata/go/v4/memcached-operator", tc.Dir).Run()).To(Succeed())
 
 	By("preparing the prerequisites on cluster")
 	tc.InstallPrerequisites()
@@ -77,7 +73,9 @@ var _ = BeforeSuite(func() {
 	err = tc.Make("docker-build", "IMG="+tc.ImageName)
 	Expect(err).NotTo(HaveOccurred())
 
-	if tc.IsRunningOnKind() {
+	onKind, err := tc.IsRunningOnKind()
+	Expect(err).NotTo(HaveOccurred())
+	if onKind {
 		By("loading the required images into Kind cluster")
 		Expect(tc.LoadImageToKindCluster()).To(Succeed())
 		Expect(tc.LoadImageToKindClusterWithName("quay.io/operator-framework/scorecard-test:dev")).To(Succeed())
@@ -88,14 +86,14 @@ var _ = BeforeSuite(func() {
 	Expect(tc.GenerateBundle()).To(Succeed())
 
 	By("installing cert manager bundle")
-	Expect(tc.InstallCertManager(false)).To(Succeed())
+	Expect(tc.InstallCertManager()).To(Succeed())
 })
 
 // AfterSuite run after all the specs have run, regardless of whether any tests have failed to ensures that
 // all be cleaned up
 var _ = AfterSuite(func() {
 	By("uninstall cert manager bundle")
-	tc.UninstallCertManager(false)
+	tc.UninstallCertManager()
 
 	By("uninstalling prerequisites")
 	tc.UninstallPrerequisites()

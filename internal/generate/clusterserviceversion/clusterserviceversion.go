@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/blang/semver/v4"
-	"github.com/operator-framework/api/pkg/operators/v1alpha1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/operator-framework/operator-registry/pkg/lib/bundle"
 
@@ -53,6 +52,11 @@ type Generator struct {
 	Collector *collector.Manifests
 	// Annotations are applied to the resulting CSV.
 	Annotations map[string]string
+	// ExtraServiceAccounts are ServiceAccount names to consider when matching
+	// {Cluster}Roles to include in a CSV via their Bindings.
+	ExtraServiceAccounts []string
+	// RelatedImages are additional images used by the operator.
+	RelatedImages []operatorsv1alpha1.RelatedImage
 
 	// Func that returns the writer the generated CSV's bytes are written to.
 	getWriter func() (io.Writer, error)
@@ -123,7 +127,7 @@ func (g *Generator) Generate(opts ...Option) (err error) {
 }
 
 // setSDKAnnotations adds SDK metric labels to the base if they do not exist.
-func (g Generator) setAnnotations(csv *v1alpha1.ClusterServiceVersion) {
+func (g Generator) setAnnotations(csv *operatorsv1alpha1.ClusterServiceVersion) {
 	annotations := csv.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -162,8 +166,9 @@ func (g *Generator) generate() (base *operatorsv1alpha1.ClusterServiceVersion, e
 	if g.FromVersion != "" {
 		base.Spec.Replaces = genutil.MakeCSVName(g.OperatorName, g.FromVersion)
 	}
+	base.Spec.RelatedImages = g.RelatedImages
 
-	if err := ApplyTo(g.Collector, base); err != nil {
+	if err := ApplyTo(g.Collector, base, g.ExtraServiceAccounts); err != nil {
 		return nil, err
 	}
 

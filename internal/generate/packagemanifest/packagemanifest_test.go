@@ -15,13 +15,12 @@
 package packagemanifest_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/operator-framework/operator-sdk/internal/generate/packagemanifest"
+	"github.com/operator-framework/operator-sdk/internal/generate/packagemanifest"
 )
 
 var _ = Describe("A package manifest generator", func() {
@@ -33,8 +32,8 @@ var _ = Describe("A package manifest generator", func() {
 	})
 	Describe("Generate", func() {
 		var (
-			g                                    Generator
-			blankOpts                            Options
+			g                                    packagemanifest.Generator
+			blankOpts                            packagemanifest.Options
 			operatorName                         string
 			outputDir                            string
 			pkgManFilename                       string
@@ -45,9 +44,9 @@ var _ = Describe("A package manifest generator", func() {
 			pkgManUpdatedSecondChannelNewDefault string
 		)
 		BeforeEach(func() {
-			g = NewGenerator()
+			g = packagemanifest.NewGenerator()
 			operatorName = "memcached-operator"
-			blankOpts = Options{}
+			blankOpts = packagemanifest.Options{}
 			pkgManFilename = operatorName + ".package.yaml"
 			outputDir = os.TempDir()
 			pkgManDefault = `channels:
@@ -89,61 +88,61 @@ packageName: memcached-operator
 			It("writes a package manifest", func() {
 				err := g.Generate(operatorName, "0.0.1", outputDir, blankOpts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManDefault))
 			})
 			It("writes a package manifest with a non-default channel", func() {
-				opts := Options{
+				opts := packagemanifest.Options{
 					ChannelName: "stable",
 				}
 
 				err := g.Generate(operatorName, "0.0.1", outputDir, opts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManOneChannel))
 			})
 		})
 		Context("when updating an existing package manifest", func() {
 			It("creates a new package manifest if provided an existing packagemanifest that doesn't exist", func() {
-				opts := Options{
+				opts := packagemanifest.Options{
 					BaseDir:     "testpotato",
 					ChannelName: "stable",
 				}
 
 				err := g.Generate(operatorName, "0.0.1", outputDir, opts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManOneChannel))
 			})
 			It("updates an existing package manifest with a updated channel", func() {
-				opts := Options{
+				opts := packagemanifest.Options{
 					BaseDir:     testDataDir,
 					ChannelName: "alpha",
 				}
 
 				err := g.Generate(operatorName, "0.0.2", outputDir, opts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManUpdatedOneChannel))
 			})
 			It("updates an existing package manifest with a new channel", func() {
-				opts := Options{
+				opts := packagemanifest.Options{
 					BaseDir:     testDataDir,
 					ChannelName: "stable",
 				}
 
 				err := g.Generate(operatorName, "0.0.2", outputDir, opts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManUpdatedSecondChannel))
 			})
 			It("updates an existing package manifest with a new channel and an updated default channel", func() {
-				opts := Options{
+				opts := packagemanifest.Options{
 					BaseDir:          testDataDir,
 					ChannelName:      "stable",
 					IsDefaultChannel: true,
@@ -151,7 +150,7 @@ packageName: memcached-operator
 
 				err := g.Generate(operatorName, "0.0.2", outputDir, opts)
 				Expect(err).NotTo(HaveOccurred())
-				file, err := ioutil.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
+				file, err := os.ReadFile(outputDir + string(os.PathSeparator) + pkgManFilename)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(string(file)).To(Equal(pkgManUpdatedSecondChannelNewDefault))
 			})
@@ -160,26 +159,26 @@ packageName: memcached-operator
 			It("fails if no operator name is specified", func() {
 				err := g.Generate("", "", "", blankOpts)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring(ErrNoOpName.Error()))
+				Expect(err.Error()).To(ContainSubstring(packagemanifest.ErrNoOpName.Error()))
 			})
 			It("fails if no version is specified", func() {
 				err := g.Generate(operatorName, "", "", blankOpts)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring(ErrNoVersion.Error()))
+				Expect(err.Error()).To(ContainSubstring(packagemanifest.ErrNoVersion.Error()))
 			})
 			It("fails if no output directory is set", func() {
 				err := g.Generate(operatorName, "0.0.1", "", blankOpts)
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring(ErrNoOutputDir.Error()))
+				Expect(err.Error()).To(ContainSubstring(packagemanifest.ErrNoOutputDir.Error()))
 			})
 		})
 	})
 	Describe("GetBase", func() {
 		var (
-			b PackageManifest
+			b packagemanifest.PackageManifest
 		)
 		BeforeEach(func() {
-			b = PackageManifest{}
+			b = packagemanifest.PackageManifest{}
 		})
 		It("returns a new blank packagemanifest", func() {
 			b.PackageName = "sweetsop"
@@ -196,7 +195,7 @@ packageName: memcached-operator
 			Expect(err).NotTo(HaveOccurred())
 			Expect(pm).NotTo(BeNil())
 			Expect(pm.PackageName).To(Equal("memcached-operator"))
-			Expect(len(pm.Channels)).To(Equal(1))
+			Expect(pm.Channels).To(HaveLen(1))
 			Expect(pm.Channels[0].Name).To(Equal("alpha"))
 			Expect(pm.Channels[0].CurrentCSVName).To(Equal("memcached-operator.v0.0.1"))
 			Expect(pm.DefaultChannelName).To(Equal("alpha"))

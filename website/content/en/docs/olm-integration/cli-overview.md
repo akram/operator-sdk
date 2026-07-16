@@ -51,7 +51,7 @@ must ensure the in-use build tool is able to push to/pull from the registry:
 - `none` (containerd): uses docker's `config.json`, [certificate configuration][none-certs]
 
 The `run bundle` or `run bundle-upgrade` commands use the `none` image tool, described above, in-cluster.
-These commands accept the names of secrets available in the deployment namesace that contain configuration file data.
+These commands accept the names of secrets available in the deployment namespace that contain configuration file data.
 Ideally a cluster admin will provision a namespace and service account for bundle testing,
 such that they include and reference these secrets:
 - Create an [image pull secret][k8s-image-pull-sec] for your `config.json` and [add it to your service account][k8s-pull-sec-sa].
@@ -84,10 +84,9 @@ was not provisioned with these secrets.
 
 ### Package Manifests
 
-- [`generate packagemanifests`][cli-gen-packagemanifests]: creates a new or updates an existing versioned
-directory as part of the package manifests in the `<project-root>/packagemanifests` directory.
-- [`run packagemanifests`][doc-testing-deployment]: runs an Operator's package manifests format
-with an existing OLM installation.
+The operator-framework is removing support for the packagemanifests format in the near future, and migration efforts are currently underway. Therefore `generate packagemanifests` and `run packagemanifests` commands have been deprecated. For more
+details on bundle format refer [here][bundle]. To migrate from packagemanifests to the bundle format, use the [`operator-sdk pkgman-to-bundle`][cli-pkgman-to-bundle] command.
+
 
 
 [bundle]:https://github.com/operator-framework/operator-registry/blob/v1.16.1/docs/design/operator-bundle.md
@@ -98,8 +97,8 @@ with an existing OLM installation.
 [cli-olm-uninstall]:/docs/cli/operator-sdk_olm_uninstall
 [cli-gen-bundle]:/docs/cli/operator-sdk_generate_bundle
 [cli-run-bundle]:/docs/cli/operator-sdk_run_bundle
-[cli-gen-packagemanifests]:/docs/cli/operator-sdk_generate_packagemanifests
 [cli-gen-kustomize-manifests]:/docs/cli/operator-sdk_generate_kustomize_manifests
 [cli-bundle-validate]:/docs/cli/operator-sdk_bundle_validate
 [doc-testing-deployment]:/docs/olm-integration/testing-deployment
 [cli-run-bundle-upgrade]: /docs/cli/operator-sdk_run_bundle-upgrade
+[cli-pkgman-to-bundle]: /docs/cli/operator-sdk_pkgman-to-bundle

@@ -3,7 +3,7 @@ package util
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 	"text/template"
 
@@ -33,7 +33,7 @@ weight: {{ .Weight }}
 {{ if .PullRequestLink }}
 _See {{ .PullRequestLink }} for more details._
 {{ end }}{{ else }}
-There are no migrations for this release! :tada:
+There are no migrations for this release! 🎉
 {{ end }}`
 
 var migrationGuideTmpl = template.Must(template.New("migrationGuide").Parse(migrationGuideTemplate))
@@ -51,7 +51,7 @@ func (mg *MigrationGuide) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
 
 func MigrationGuideFromEntries(version semver.Version, entries []FragmentEntry) MigrationGuide {

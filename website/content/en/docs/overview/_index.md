@@ -69,11 +69,11 @@ binary or project type to look up a Y-axis version to plug into the compatibilit
 
 By binary:
 
-| Binary                  | Lookup strategy               |
-|-------------------------|-------------------------------|
-| `operator-sdk`          | `$ operator-sdk version`      |
-| `ansible-operator`      | `$ ansible-operator version`  |
-| `helm-operator`         | `$ helm-operator version`     |
+| Binary                  | Lookup strategy               | Kubernetes version    | `client-go` version        |
+|-------------------------|-------------------------------|-----------------------|----------------------------|
+| `operator-sdk`          | `$ operator-sdk version`      | {{% kube-version %}}  | {{% client-go-version %}}  |
+| `ansible-operator`      | `$ ansible-operator version`  | {{% kube-version %}}  | {{% client-go-version %}}  |
+| `helm-operator`         | `$ helm-operator version`     | {{% kube-version %}}  | {{% client-go-version %}}  |
 
 By project type (replace `${IMAGE_VERSION}` with base image version in your project `Dockerfile`):
 
@@ -90,9 +90,9 @@ By project type (replace `${IMAGE_VERSION}` with base image version in your proj
 
 ## OLM version compatibility
 
-Operator SDK officially supports the latest 3 versions of OLM present at the time of a given Operator SDK release. These versions of OLM manifests are packaged with the SDK binary in the form of `bindata` to support low-latency installations of OLM with [`operator-sdk olm install`][olm-install-cmd]. Any other version installed with this command may work but is not tested nor officially supported.
+Operator SDK officially supports the latest 3 minor versions of OLM present at the time of a given Operator SDK release. These versions of OLM manifests are packaged with the SDK binary in the form of `bindata` to support low-latency installations of OLM with [`operator-sdk olm install`][olm-install-cmd]. Any other version installed with this command may work but is not tested nor officially supported.
 
-Currently, the officially supported OLM Versions are: 0.15.1, 0.16.1 and 0.17.0.
+Currently, the officially supported OLM Versions are: 0.26.0, 0.27.0, and 0.28.0
 
 ## Platform support
 
@@ -100,9 +100,9 @@ Official build architectures for binaries:
 
 | Binary                    | `linux/amd64` | `linux/arm64` |`linux/ppc64le` | `linux/s390x` | `darwin/amd64` | `darwin/arm64` |
 |---------------------------|---------------|---------------|----------------|---------------|----------------|----------------|
-| `operator-sdk`            | ✓             | ✓             | ✓              | ✓             | ✓              | -              |
-| `ansible-operator`        | ✓             | ✓             | ✓              | ✓             | ✓              | -              |
-| `helm-operator`           | ✓             | ✓             | ✓              | ✓             | ✓              | -              |
+| `operator-sdk`            | ✓             | ✓             | ✓              | ✓             | ✓              | ✓              |
+| `ansible-operator`        | ✓             | ✓             | ✓              | ✓             | ✓              | ✓              |
+| `helm-operator`           | ✓             | ✓             | ✓              | ✓             | ✓              | ✓              |
 
 Official build architectures for images:
 
@@ -140,7 +140,7 @@ Operator SDK is under Apache 2.0 license. See the [LICENSE][license_file] file f
 
 [ansible-guide]:/docs/building-operators/ansible/quickstart/
 [bug_guide]:/docs/contribution-guidelines/reporting-issues/
-[capability_levels]: /docs/advanced-topics/operator-capabilities/operator-capabilities
+[capability_levels]: /docs/overview/operator-capabilities/
 [contrib]: https://github.com/operator-framework/operator-sdk/blob/master/CONTRIBUTING.MD
 [controller_runtime]: https://github.com/kubernetes-sigs/controller-runtime
 [faq]: /docs/faqs/

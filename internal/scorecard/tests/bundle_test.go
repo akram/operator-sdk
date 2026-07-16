@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	scapiv1alpha3 "github.com/operator-framework/api/pkg/apis/scorecard/v1alpha3"
 	apimanifests "github.com/operator-framework/api/pkg/manifests"
@@ -127,15 +127,25 @@ var _ = Describe("Basic and OLM tests", func() {
 	Describe("OLM Tests", func() {
 
 		Describe("Test Status and Spec Descriptors", func() {
-			var (
-				cr  unstructured.Unstructured
-				csv operatorsv1alpha1.ClusterServiceVersion
-			)
-
-			csv = operatorsv1alpha1.ClusterServiceVersion{
+			csv := operatorsv1alpha1.ClusterServiceVersion{
 				Spec: operatorsv1alpha1.ClusterServiceVersionSpec{
 					CustomResourceDefinitions: operatorsv1alpha1.CustomResourceDefinitions{
 						Owned: []operatorsv1alpha1.CRDDescription{
+							operatorsv1alpha1.CRDDescription{
+								Name:    "Test",
+								Version: "v2",
+								Kind:    "TestKind",
+								StatusDescriptors: []operatorsv1alpha1.StatusDescriptor{
+									operatorsv1alpha1.StatusDescriptor{
+										Path: "newStatus",
+									},
+								},
+								SpecDescriptors: []operatorsv1alpha1.SpecDescriptor{
+									operatorsv1alpha1.SpecDescriptor{
+										Path: "newSpec",
+									},
+								},
+							},
 							operatorsv1alpha1.CRDDescription{
 								Name:    "Test",
 								Version: "v1",
@@ -156,122 +166,176 @@ var _ = Describe("Basic and OLM tests", func() {
 				},
 			}
 
-			It("should pass when csv with owned cr and required fields is present", func() {
-				cr = unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"status": map[string]interface{}{
-							"status": "val",
-						},
-						"spec": map[string]interface{}{
-							"spec": "val",
-						},
-					},
-				}
-				cr.SetGroupVersionKind(schema.GroupVersionKind{
-					Kind:  "TestKind",
-					Group: "test.example.com",
-				})
-
-				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
-				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
-			})
-
 			It("should pass when CR Object Descriptor is nil", func() {
 				cr := unstructured.Unstructured{
 					Object: nil,
 				}
 				cr.SetGroupVersionKind(schema.GroupVersionKind{
-					Kind:  "TestKind",
-					Group: "test.example.com",
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
 				})
 
 				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
 				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
 			})
 
-			It("should fail when CR Object Descriptor is nil and CRD with given GVK cannot be found", func() {
+			It("should pass when status descriptor field is present in CR", func() {
 				cr := unstructured.Unstructured{
-					Object: nil,
-				}
-				cr.SetGroupVersionKind(schema.GroupVersionKind{
-					Kind:  "TestKindNotPresent",
-					Group: "testnotpresent.example.com",
-				})
-
-				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
-				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
-			})
-
-			It("should fail when owned CRD for CR does not have GVK set", func() {
-				cr := unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"status": map[string]interface{}{
+					Object: map[string]any{
+						"status": map[string]any{
 							"status": "val",
 						},
-					},
-				}
-
-				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
-				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
-			})
-
-			It("should fail when required descriptor field is not present in CR", func() {
-				cr := unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"node": map[string]interface{}{
-							"node": "val",
-						},
-					},
-				}
-
-				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
-				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
-			})
-			It("should pass when required descriptor field is present in CR", func() {
-				cr := unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"status": map[string]interface{}{
-							"status": "val",
-						},
-						"spec": map[string]interface{}{
+						"spec": map[string]any{
 							"spec": "val",
 						},
 					},
 				}
 				cr.SetGroupVersionKind(schema.GroupVersionKind{
-					Kind:  "TestKind",
-					Group: "test.example.com",
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
+				})
+
+				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
+				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
+			})
+
+			It("should pass when required spec descriptor field is present in CR", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"status": map[string]any{
+							"status": "val",
+						},
+						"spec": map[string]any{
+							"spec": "val",
+						},
+					},
+				}
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
 				})
 
 				result = checkOwnedCSVSpecDescriptors(cr, &csv, result)
 				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
 			})
-			It("should fail when required spec descriptor field is not present in CR", func() {
+
+			It("should pass with warning when no status descriptor field is present in CR", func() {
 				cr := unstructured.Unstructured{
-					Object: map[string]interface{}{
-						"status": map[string]interface{}{
+					Object: map[string]any{
+						"spec": map[string]any{
+							"spec": "val",
+						},
+					},
+				}
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
+				})
+
+				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
+				Expect(result.Suggestions).To(HaveLen(1))
+				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
+			})
+
+			It("should fail CRD with given GVK cannot be found", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"status": map[string]any{
+							"status": "val",
+						},
+						"spec": map[string]any{
+							"spec": "val",
+						},
+					},
+				}
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKindNotPresent",
+					Group:   "testnotpresent.example.com",
+					Version: "unknown",
+				})
+
+				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
+				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
+			})
+
+			It("should fail when CR does not have GVK set", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"status": map[string]any{
 							"status": "val",
 						},
 					},
 				}
 
+				result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
+				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
+			})
+
+			It("should fail when required spec descriptor field is not present in CR", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"spec": map[string]any{
+							"node": "val",
+						},
+					},
+				}
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
+				})
+
 				result = checkOwnedCSVSpecDescriptors(cr, &csv, result)
 				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
 			})
-			It("should fail when CRs do not have spec field specified", func() {
-				cr := []unstructured.Unstructured{
-					unstructured.Unstructured{
-						Object: map[string]interface{}{},
+
+			It("should fail cleanly (not panic) when spec is not an object", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"spec": "i-am-a-string-not-a-map",
 					},
 				}
-				result = checkSpec(cr, result)
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
+				})
+
+				Expect(func() {
+					result = checkOwnedCSVSpecDescriptors(cr, &csv, result)
+				}).NotTo(Panic())
 				Expect(result.State).To(Equal(scapiv1alpha3.FailState))
 			})
-			It("should pass when CRs do have spec field specified", func() {
+
+			It("should not panic when status is not an object", func() {
+				cr := unstructured.Unstructured{
+					Object: map[string]any{
+						"status": []any{"not", "a", "map"},
+						"spec": map[string]any{
+							"spec": "val",
+						},
+					},
+				}
+				cr.SetGroupVersionKind(schema.GroupVersionKind{
+					Kind:    "TestKind",
+					Group:   "test.example.com",
+					Version: "v1",
+				})
+
+				Expect(func() {
+					result = checkOwnedCSVStatusDescriptor(cr, &csv, result)
+				}).NotTo(Panic())
+			})
+
+			It("should pass when CRs have spec field specified", func() {
 				cr := []unstructured.Unstructured{
-					unstructured.Unstructured{
-						Object: map[string]interface{}{
-							"spec": map[string]interface{}{
+					{
+						Object: map[string]any{
+							"spec": map[string]any{
 								"spec": "val",
 							},
 						},
@@ -279,6 +343,17 @@ var _ = Describe("Basic and OLM tests", func() {
 				}
 				result = checkSpec(cr, result)
 				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
+			})
+
+			It("should pass with warning when CRs do not have spec field specified", func() {
+				cr := []unstructured.Unstructured{
+					{
+						Object: map[string]any{},
+					},
+				}
+				result = checkSpec(cr, result)
+				Expect(result.State).To(Equal(scapiv1alpha3.PassState))
+				Expect(result.Suggestions).To(HaveLen(1))
 			})
 
 		})
@@ -324,8 +399,8 @@ var _ = Describe("Basic and OLM tests", func() {
 
 		It("should pass when CR has Spec field", func() {
 			cr = unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"node": "val",
 					},
 				},
@@ -343,8 +418,8 @@ var _ = Describe("Basic and OLM tests", func() {
 
 		It("should fail when cr does not have required fields in Spec", func() {
 			cr = unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"items": "val",
 					},
 				},
@@ -362,8 +437,8 @@ var _ = Describe("Basic and OLM tests", func() {
 
 		It("should skip and pass when version/kind does not match for CR with CRD", func() {
 			cr = unstructured.Unstructured{
-				Object: map[string]interface{}{
-					"spec": map[string]interface{}{
+				Object: map[string]any{
+					"spec": map[string]any{
 						"node": "val",
 					},
 				},
@@ -377,6 +452,24 @@ var _ = Describe("Basic and OLM tests", func() {
 			result = isCRFromCRDApi(cr, crd, result)
 			Expect(result.State).To(Equal(scapiv1alpha3.PassState))
 
+		})
+
+		It("should not panic when spec or status is not an object", func() {
+			cr = unstructured.Unstructured{
+				Object: map[string]any{
+					"spec":   "not-a-map",
+					"status": []any{"also", "not", "a", "map"},
+				},
+			}
+			cr.SetGroupVersionKind(schema.GroupVersionKind{
+				Kind:    "TestKind",
+				Group:   "test.example.com",
+				Version: "v1",
+			})
+
+			Expect(func() {
+				result = isCRFromCRDApi(cr, crd, result)
+			}).NotTo(Panic())
 		})
 
 	})
@@ -424,7 +517,6 @@ var _ = Describe("Basic and OLM tests", func() {
 			result = CheckResources(crd, result)
 			Expect(result.State).To(Equal(scapiv1alpha3.FailState))
 		})
-
 	})
 
 })

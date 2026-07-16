@@ -19,11 +19,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/operator-framework/operator-sdk/hack/generate/samples/internal/helm"
+
 	log "github.com/sirupsen/logrus"
 
-	"github.com/operator-framework/operator-sdk/hack/generate/samples/internal/ansible"
 	golang "github.com/operator-framework/operator-sdk/hack/generate/samples/internal/go"
-	"github.com/operator-framework/operator-sdk/hack/generate/samples/internal/helm"
 	"github.com/operator-framework/operator-sdk/internal/testutils"
 )
 
@@ -55,9 +55,6 @@ func main() {
 
 	log.Infof("creating Helm Memcached Sample")
 	helm.GenerateMemcachedSamples(binaryPath, samplesPath)
-
-	log.Infof("creating Ansible Memcached Sample")
-	ansible.GenerateMemcachedSamples(binaryPath, samplesPath)
 
 	log.Infof("creating Go Memcached Sample with Webhooks")
 	golang.GenerateMemcachedSamples(binaryPath, samplesPath)

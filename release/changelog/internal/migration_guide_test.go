@@ -1,7 +1,6 @@
 package util
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -92,7 +91,7 @@ title: v999.999.999
 weight: 3
 ---
 
-There are no migrations for this release! :tada:
+There are no migrations for this release! 🎉
 `,
 		},
 	}
@@ -151,14 +150,14 @@ Migration body 1
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			tmpFile, err := ioutil.TempFile("", "go-test-changelog")
+			tmpFile, err := os.CreateTemp("", "go-test-changelog")
 			assert.NoError(t, err)
 			assert.NoError(t, tmpFile.Close())
 			defer assert.NoError(t, os.Remove(tmpFile.Name()))
 
 			assert.NoError(t, tc.mg.WriteFile(tmpFile.Name()))
 
-			d, err := ioutil.ReadFile(tmpFile.Name())
+			d, err := os.ReadFile(tmpFile.Name())
 			assert.NoError(t, err)
 			assert.Equal(t, tc.output, string(d))
 		})

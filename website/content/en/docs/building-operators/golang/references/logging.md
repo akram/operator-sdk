@@ -6,7 +6,7 @@ weight: 20
 
 # Overview
 
-Operator SDK-generated operators use the [`logr`][godoc_logr] interface to log. This log interface has several backends such as [`zap`][repo_zapr], which the SDK uses in generated code by default. [`logr.Logger`][godoc_logr_logger] exposes [structured logging][site_struct_logging] methods that help create machine-readable logs and adding a wealth of information to log records.
+Operator SDK-generated operators use the [`logr`][godoc_logr] interface to log. This log interface has several backends such as [`zap`][repo_zapr], which the SDK uses in generated code by default. [`logr.Logger`][godoc_logr_logger] exposes structured logging methods that help create machine-readable logs and adding a wealth of information to log records.
 
 ## Default zap logger
 
@@ -33,7 +33,7 @@ Operators set the logger for all operator logging in `main.go`. To illustrate ho
 package main
 
 import (
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"  
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -151,34 +151,15 @@ run: manifests generate fmt vet
 
 ### Setting flags when deploying to a cluster
 
-When deploying your operator to a cluster you can set additional flags using an `args` array in your operator's `container` spec in the file `config/default/manager_auth_proxy_patch.yaml` For example:
+When deploying your operator to a cluster you can set additional flags using an `args` array in your operator's `container` spec in the file `config/default/manager_metrics_patch.yaml` For example:
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: controller-manager
-  namespace: system
-spec:
-  template:
-    spec:
-      containers:
-      - name: kube-rbac-proxy
-        image: gcr.io/kubebuilder/kube-rbac-proxy:v0.5.0
-        args:
-        - "--secure-listen-address=0.0.0.0:8443"
-        - "--upstream=http://127.0.0.1:8080/"
-        - "--logtostderr=true"
-        - "--v=10"
-        ports:
-        - containerPort: 8443
-          name: https
-      - name: manager
-        args:
-        - "--metrics-bind-address=127.0.0.1:8080"
-        - "--leader-elect"
-        - "--zap-encoder=console"
-        - "--zap-log-level=debug"
+- op: add
+  path: /spec/template/spec/containers/0/args/0
+  value: --zap-log-level=debug 
+- op: add
+  path: /spec/template/spec/containers/0/args/0
+  value: --zap-encoder=console
 ```
 
 ## Creating a structured log statement
@@ -191,7 +172,7 @@ An example from [`memcached_controller.go`][code_memcached_controller]:
 package memcached
 
 import (
-	"github.com/go-logr/logr"
+  ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 
@@ -203,7 +184,7 @@ type MemcachedReconciler struct {
 }
 
 func (r *MemcachedReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := r.Log.WithValues("memcached", req.NamespacedName)
+	log := ctrllog.FromContext(ctx)
 
 	// Fetch the Memcached instance
 	memcached := &cachev1alpha1.Memcached{}
@@ -255,11 +236,10 @@ Log records will look like the following (from `log.Error()` above):
 If you do not want to use `logr` as your logging tool, you can remove `logr`-specific statements without issue from your operator's code, including the `logr` setup code in `main.go`, and add your own. Note that removing `logr` setup code will prevent `controller-runtime` from logging.
 
 
-[godoc_logr]:https://godoc.org/github.com/go-logr/logr
-[repo_zapr]:https://godoc.org/github.com/go-logr/zapr
-[godoc_logr_logger]:https://godoc.org/github.com/go-logr/logr#Logger
-[site_struct_logging]:https://www.client9.com/structured-logging-in-golang/
+[godoc_logr]:https://pkg.go.dev/github.com/go-logr/logr
+[repo_zapr]:https://pkg.go.dev/github.com/go-logr/zapr
+[godoc_logr_logger]:https://pkg.go.dev/github.com/go-logr/logr#Logger
 [code_memcached_controller]: https://github.com/operator-framework/operator-sdk/blob/v1.2.0/testdata/go/memcached-operator/controllers/memcached_controller.go
 [logfmt_repo]:https://github.com/jsternberg/zap-logfmt
 [controller_runtime_zap]:https://github.com/kubernetes-sigs/controller-runtime/tree/master/pkg/log/zap
-[logging_godocs]: https://godoc.org/github.com/kubernetes-sigs/controller-runtime/pkg/log/zap#Options.BindFlags
+[logging_godocs]: https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/log/zap#Options.BindFlags

@@ -28,7 +28,6 @@ import (
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	cfgv2 "sigs.k8s.io/kubebuilder/v3/pkg/config/v2"
 	"sigs.k8s.io/yaml"
 )
 
@@ -119,7 +118,7 @@ func makeObjectFileName(obj client.Object) string {
 }
 
 // writeObjectToFile marshals crd to bytes and writes them to dir in file.
-func writeObjectToFile(dir string, obj interface{}, fileName string) error {
+func writeObjectToFile(dir string, obj any, fileName string) error {
 	f, err := os.Create(filepath.Join(dir, fileName))
 	if err != nil {
 		return err
@@ -129,7 +128,7 @@ func writeObjectToFile(dir string, obj interface{}, fileName string) error {
 }
 
 // writeObject marshals crd to bytes and writes them to w.
-func writeObject(w io.Writer, obj interface{}) error {
+func writeObject(w io.Writer, obj any) error {
 	b, err := yaml.Marshal(obj)
 	if err != nil {
 		return err
@@ -182,24 +181,15 @@ func GetPackageNameAndLayout(defaultPackageName string) (packageName string, lay
 			return "", "", err
 		}
 		if packageName == "" {
-			switch {
-			case cfg.GetVersion().Compare(cfgv2.Version) == 0:
-				wd, err := os.Getwd()
-				if err != nil {
-					return "", "", err
-				}
-				packageName = strings.ToLower(filepath.Base(wd))
-			default:
-				packageName = cfg.GetProjectName()
-				if packageName == "" {
-					return "", "", errors.New("--package-name must be set if \"projectName\" is not set in the PROJECT config file")
-				}
+			packageName = cfg.GetProjectName()
+			if packageName == "" {
+				return "", "", errors.New("--package <name> must be set if \"projectName\" is not set in the PROJECT config file")
 			}
 		}
 		layout = projutil.GetProjectLayout(cfg)
 	} else {
 		if packageName == "" {
-			return "", "", errors.New("--package-name must be set if PROJECT config file is not present")
+			return "", "", errors.New("--package <name> must be set if PROJECT config file is not present")
 		}
 		layout = "unknown"
 	}

@@ -15,7 +15,7 @@
 package genutil
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -47,7 +47,7 @@ var _ = Describe("GetManifestObjects", func() {
 				{ObjectMeta: metav1.ObjectMeta{Namespace: "bar"}},
 			},
 		}
-		objs := GetManifestObjects(&m)
+		objs := GetManifestObjects(&m, nil)
 		Expect(objs).To(HaveLen(len(m.Roles) + len(m.ClusterRoles) + len(m.ServiceAccounts) + len(m.V1CustomResourceDefinitions) + len(m.V1beta1CustomResourceDefinitions)))
 		for _, obj := range objs {
 			Expect(obj.GetNamespace()).To(BeEmpty())

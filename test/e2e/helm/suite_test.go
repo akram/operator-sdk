@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
 
 	"github.com/operator-framework/operator-sdk/internal/testutils"
-	"github.com/operator-framework/operator-sdk/internal/util"
 )
 
 // TestE2EHelm ensures the Helm projects built with the SDK tool by using its binary.
@@ -60,10 +60,6 @@ var _ = BeforeSuite(func() {
 	By("copying sample to a temporary e2e directory")
 	Expect(exec.Command("cp", "-r", "../../../testdata/helm/memcached-operator", tc.Dir).Run()).To(Succeed())
 
-	By("fetching the current-context")
-	tc.Kubectx, err = tc.Kubectl.Command("config", "current-context")
-	Expect(err).NotTo(HaveOccurred())
-
 	By("preparing the prerequisites on cluster")
 	tc.InstallPrerequisites()
 
@@ -72,7 +68,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	By("replacing project Dockerfile to use Helm base image with the dev tag")
-	err = util.ReplaceRegexInFile(filepath.Join(tc.Dir, "Dockerfile"), "quay.io/operator-framework/helm-operator:.*", "quay.io/operator-framework/helm-operator:dev")
+	err = kbutil.ReplaceRegexInFile(filepath.Join(tc.Dir, "Dockerfile"), "quay.io/operator-framework/helm-operator:.*", "quay.io/operator-framework/helm-operator:dev")
 	Expect(err).Should(Succeed())
 
 	By("checking the kustomize setup")
@@ -83,7 +79,9 @@ var _ = BeforeSuite(func() {
 	err = tc.Make("docker-build", "IMG="+tc.ImageName)
 	Expect(err).NotTo(HaveOccurred())
 
-	if tc.IsRunningOnKind() {
+	onKind, err := tc.IsRunningOnKind()
+	Expect(err).NotTo(HaveOccurred())
+	if onKind {
 		By("loading the required images into Kind cluster")
 		Expect(tc.LoadImageToKindCluster()).To(Succeed())
 		Expect(tc.LoadImageToKindClusterWithName("quay.io/operator-framework/scorecard-test:dev")).To(Succeed())

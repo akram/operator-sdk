@@ -353,7 +353,7 @@ Upon updating the project to `v0.8.2` the following breaking changes apply:
 
 **modules**
 
-- Ensure the the following `replace` directives are present in your `go.mod` file:
+- Ensure the following `replace` directives are present in your `go.mod` file:
     ```
     replace (
             github.com/coreos/prometheus-operator => github.com/coreos/prometheus-operator v0.29.0
@@ -414,7 +414,7 @@ Upon updating the project to `v0.8.2` the following breaking changes apply:
 
 **modules**
 
-- Ensure the the following `replace` directives are present in your `go.mod` file:
+- Ensure the following `replace` directives are present in your `go.mod` file:
     ```
     // Pinned to kubernetes-1.14.1
     replace (
@@ -506,7 +506,7 @@ Using `dep` is no longer supported. Follow [Go's official blog post about migrat
 
 **modules**
 
-- Ensure the the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
+- Ensure the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
 
 ```
 require (
@@ -574,7 +574,7 @@ func printVersion() {
 
 **modules**
 
-- Ensure the the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
+- Ensure the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
 
 ```
 require (
@@ -635,13 +635,13 @@ Replace `*` per verbs in order to solve the issue [671](https://github.com/opera
 - **Breaking change:** An existing CSV's `spec.customresourcedefinitions.owned` is now always overwritten except for each name, version, and kind on invoking olm-catalog gen-csv when Go API code annotations are present.
 - **Potentially Breaking change:** Be aware that there are potentially other breaking changes due to the controller-runtime and Kubernetes version be upgraded from `v0.4.0` to `v1.16.2`, respectively. There may be breaking changes to Go client code due to both of those changes.
 
-For further detailed information see [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/master/CHANGELOG.md#v0130)
+For further detailed information see [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/v0.14.0/CHANGELOG.md#v0130)
 
 ## `v0.14.x`
 
 **modules**
 
-- Ensure the the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
+- Ensure the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
 
 ```
 require (
@@ -785,7 +785,7 @@ func addMetrics(ctx context.Context, cfg *rest.Config, namespace string) {
 
 **Deprecations**
 
-The `github.com/operator-framework/operator-sdk/pkg/restmapper` package was deprecated in favor of the `DynamicRESTMapper` implementation in [controller-runtime](https://godoc.org/github.com/kubernetes-sigs/controller-runtime/pkg/client/apiutil#NewDiscoveryRESTMapper). Users should migrate to controller-runtime's implementation, which is a drop-in replacement.
+The `github.com/operator-framework/operator-sdk/pkg/restmapper` package was deprecated in favor of the `DynamicRESTMapper` implementation in [controller-runtime](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/client/apiutil#NewDiscoveryRESTMapper). Users should migrate to controller-runtime's implementation, which is a drop-in replacement.
 
 Replace:
 ```
@@ -838,7 +838,7 @@ You can also use the fully-qualified name without declaring the collection:
 
 **Notable Changes**
 
-These notable changes contain just the most important user-facing changes. See the [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/master/CHANGELOG.md#v0141) for details of the release.
+These notable changes contain just the most important user-facing changes. See the [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/v0.15.0/CHANGELOG.md#v0141) for details of the release.
 
 **Ansible version update**
 
@@ -868,7 +868,7 @@ If you are using any external helm v2 tooling with the your helm operator-manage
 
 **modules**
 
-- Ensure the the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
+- Ensure the following `require` modules and `replace` directives with the specific versions are present in your `go.mod` file:
 
 ```
 require (
@@ -944,7 +944,7 @@ With:
 oprator-sdk run exec-entrypoint helm --watches-file=$HOME/watches.yaml
 ```
 
-See the [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/master/CHANGELOG.md#v0151) for details of the release.
+See the [CHANGELOG](https://github.com/operator-framework/operator-sdk/blob/v0.16.0/CHANGELOG.md#v0151) for details of the release.
 
 ## v0.16.x
 
@@ -1142,7 +1142,7 @@ func main() {
 	// Add support for MultiNamespace set in WATCH_NAMESPACE (e.g ns1,ns2)
 	// Note that this is not intended to be used for excluding namespaces, this is better done via a Predicate
 	// Also note that you may face performance issues when using this with a high number of namespaces.
-	// More Info: https://godoc.org/github.com/kubernetes-sigs/controller-runtime/pkg/cache#MultiNamespacedCacheBuilder
+	// More Info: https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/cache#MultiNamespacedCacheBuilder
 	if strings.Contains(namespace, ",") {
 		options.Namespace = ""
 		options.NewCache = cache.MultiNamespacedCacheBuilder(strings.Split(namespace, ","))
@@ -1223,8 +1223,9 @@ The core Ansible Kubernetes modules have been moved to the [`community.kubernete
 
 ```yaml
 collections:
-  - community.kubernetes
+  - kubernetes.core
   - operator_sdk.util
+  - cloud.common
 ```
 
 Users should then add the following stages to their `build/Dockerfile`:
@@ -1287,7 +1288,7 @@ which ./bin/openapi-gen > /dev/null || go build -o ./bin/openapi-gen k8s.io/kube
 The Molecule version for Ansible based-operators was upgraded from `2.22` to `3.0.2`. The following changes are required in the default scaffold files.
 
 - Remove the `scenario.name` from `molecule.yaml` and then, ensure that any condition with will look for the folder name which determines the scenario name from now on
-- Replace the lint with newer syntax from [documentation](https://molecule.readthedocs.io/en/latest/configuration.html#lint). See:
+- Replace the lint with newer syntax from [documentation](https://molecule.readthedocs.io/contributing/#linting). See:
 
 Replace:
 
@@ -1372,12 +1373,12 @@ first `COPY` from `COPY /*.yaml manifests/` to `COPY deploy/olm-catalog/<operato
 [mercurial]: https://www.mercurial-scm.org/downloads
 [migrating-to-modules]: https://github.com/golang/go/wiki/Modules#migrating-to-modules
 [modules-wiki]: https://github.com/golang/go/wiki/Modules#migrating-to-modules
-[print-deps-cli]: https://v0-19-x.sdk.operatorframework.io/docs/cli/operator-sdk_print-deps/
-[changelog]: https://github.com/operator-framework/operator-sdk/blob/master/CHANGELOG.md
+[print-deps-cli]: https://github.com/operator-framework/operator-sdk/blob/v0.19.x/website/content/en/docs/cli/operator-sdk_print-deps.md
+[changelog]: https://github.com/operator-framework/operator-sdk/blob/v1.3.0/CHANGELOG.md
 [release-notes]: https://github.com/operator-framework/operator-sdk/releases
 [v0.1.0-migration-guide]: ../v0.1.0-migration-guide
 [manifest-format]: https://github.com/operator-framework/operator-registry#manifest-format
-[client-doc]: https://v0-19-x.sdk.operatorframework.io/docs/golang/legacy/references/client/
+[client-doc]: https://github.com/operator-framework/operator-sdk/blob/v0.19.x/website/content/en/docs/golang/references/client.md
 [api-rules]: https://github.com/kubernetes/kubernetes/tree/36981002246682ed7dc4de54ccc2a96c1a0cbbdb/api/api-rules
 [generating-crd]: https://book.kubebuilder.io/reference/generating-crd.html
 [markers]: https://book.kubebuilder.io/reference/markers.html

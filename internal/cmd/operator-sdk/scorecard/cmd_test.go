@@ -15,7 +15,7 @@
 package scorecard
 
 import (
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -65,6 +65,18 @@ var _ = Describe("Running the scorecard command", func() {
 			Expect(flag).NotTo(BeNil())
 			Expect(flag.Shorthand).To(Equal("w"))
 			Expect(flag.DefValue).To(Equal("30s"))
+
+			flag = cmd.Flags().Lookup("storage-image")
+			Expect(flag).NotTo(BeNil())
+			Expect(flag.Shorthand).To(Equal("b"))
+			// Use the digest of the latest scorecard-storage image
+			Expect(flag.DefValue).To(Equal("quay.io/operator-framework/scorecard-storage@sha256:a3bfda71281393c7794cabdd39c563fb050d3020fd0b642ea164646bdd39a0e2"))
+
+			flag = cmd.Flags().Lookup("untar-image")
+			Expect(flag).NotTo(BeNil())
+			Expect(flag.Shorthand).To(Equal("u"))
+			// Use the digest of the latest scorecard-untar image
+			Expect(flag.DefValue).To(Equal("quay.io/operator-framework/scorecard-untar@sha256:2e728c5e67a7f4dec0df157a322dd5671212e8ae60f69137463bd4fdfbff8747"))
 		})
 	})
 

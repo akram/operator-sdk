@@ -17,10 +17,12 @@ package scorecard
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/operator-framework/api/pkg/apis/scorecard/v1alpha3"
@@ -30,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	scorecardannotations "github.com/operator-framework/operator-sdk/internal/annotations/scorecard"
+	xunit "github.com/operator-framework/operator-sdk/internal/cmd/operator-sdk/scorecard/xunit"
 	"github.com/operator-framework/operator-sdk/internal/flags"
 	registryutil "github.com/operator-framework/operator-sdk/internal/registry"
 	"github.com/operator-framework/operator-sdk/internal/scorecard"
@@ -46,6 +49,10 @@ type scorecardCmd struct {
 	list           bool
 	skipCleanup    bool
 	waitTime       time.Duration
+	storageImage   string
+	untarImage     string
+	testOutput     string
+	podSecurity    string
 }
 
 func NewCmd() *cobra.Command {
@@ -59,10 +66,10 @@ func NewCmd() *cobra.Command {
 		Long: `Has flags to configure dsl, bundle, and selector. This command takes
 one argument, either a bundle image or directory containing manifests and metadata.
 If the argument holds an image tag, it must be present remotely.`,
-		PreRunE: func(cmd *cobra.Command, args []string) (err error) {
+		PreRunE: func(_ *cobra.Command, args []string) (err error) {
 			return c.validate(args)
 		},
-		RunE: func(cmd *cobra.Command, args []string) (err error) {
+		RunE: func(_ *cobra.Command, args []string) (err error) {
 			c.bundle = args[0]
 			return c.run()
 		},
@@ -73,7 +80,8 @@ If the argument holds an image tag, it must be present remotely.`,
 	scorecardCmd.Flags().StringVarP(&c.config, "config", "c", "", "path to scorecard config file")
 	scorecardCmd.Flags().StringVarP(&c.namespace, "namespace", "n", "", "namespace to run the test images in")
 	scorecardCmd.Flags().StringVarP(&c.outputFormat, "output", "o", "text",
-		"Output format for results. Valid values: text, json")
+		"Output format for results. Valid values: text, json, xunit")
+	scorecardCmd.Flags().StringVar(&c.podSecurity, "pod-security", "legacy", "option to run scorecard with legacy pod security context")
 	scorecardCmd.Flags().StringVarP(&c.serviceAccount, "service-account", "s", "default",
 		"Service account to use for tests")
 	scorecardCmd.Flags().BoolVarP(&c.list, "list", "L", false,
@@ -82,6 +90,18 @@ If the argument holds an image tag, it must be present remotely.`,
 		"Disable resource cleanup after tests are run")
 	scorecardCmd.Flags().DurationVarP(&c.waitTime, "wait-time", "w", 30*time.Second,
 		"seconds to wait for tests to complete. Example: 35s")
+	// Please note that for Operator-sdk + Preflight + DCI integration in disconnected environments,
+	// it is necessary to refer to storage-image and untar-image using their digests instead of tags.
+	// If you need to make changes to these images, please ensure that you always use the digests.
+	scorecardCmd.Flags().StringVarP(&c.storageImage, "storage-image", "b",
+		"quay.io/operator-framework/scorecard-storage@sha256:a3bfda71281393c7794cabdd39c563fb050d3020fd0b642ea164646bdd39a0e2",
+		"Storage image to be used by the Scorecard pod")
+	// Use the digest of the latest scorecard-untar image
+	scorecardCmd.Flags().StringVarP(&c.untarImage, "untar-image", "u",
+		"quay.io/operator-framework/scorecard-untar@sha256:2e728c5e67a7f4dec0df157a322dd5671212e8ae60f69137463bd4fdfbff8747",
+		"Untar image to be used by the Scorecard pod")
+	scorecardCmd.Flags().StringVarP(&c.testOutput, "test-output", "t", "test-output",
+		"Test output directory.")
 
 	return scorecardCmd
 }
@@ -102,10 +122,57 @@ func (c *scorecardCmd) printOutput(output v1alpha3.TestList) error {
 			return fmt.Errorf("marshal json error: %v", err)
 		}
 		fmt.Printf("%s\n", string(bytes))
+	case "xunit":
+		xunitOutput := c.convertXunit(output)
+		bytes, err := xml.MarshalIndent(xunitOutput, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal xml error: %v", err)
+		}
+		fmt.Printf("%s\n", string(bytes))
 	default:
 		return fmt.Errorf("invalid output format selected")
 	}
 	return nil
+}
+
+func (c *scorecardCmd) convertXunit(output v1alpha3.TestList) xunit.TestSuites {
+	const (
+		imagePropName        = "spec.image"
+		entrypointPropName   = "spec.entrypoint"
+		testPropName         = "labels.test"
+		clusterPhasePropName = "labels.cluster-phase"
+	)
+
+	suites := make([]xunit.TestSuite, 0, len(output.Items))
+	for i, item := range output.Items {
+		suiteName, ok := item.Spec.Labels["test"]
+		if !ok {
+			suiteName = fmt.Sprintf("testsuite-%03d", i+1)
+		}
+
+		ts := xunit.NewSuite(suiteName)
+		ts.AddProperty(imagePropName, item.Spec.Image)
+		ts.AddProperty(entrypointPropName, strings.Join(item.Spec.Entrypoint, " "))
+		ts.AddProperty(testPropName, suiteName)
+		if phase, ok := item.Spec.Labels["cluster-phase"]; ok {
+			ts.AddProperty(clusterPhasePropName, phase)
+		}
+
+		for _, tc := range item.Status.Results {
+			switch tc.State {
+			case v1alpha3.PassState:
+				ts.AddSuccess(tc.Name, tc.CreationTimestamp.Time, tc.Log)
+			case v1alpha3.FailState:
+				ts.AddFailure(tc.Name, tc.CreationTimestamp.Time, tc.Log, strings.Join(tc.Errors, "\n"))
+			case v1alpha3.ErrorState:
+				ts.AddError(tc.Name, tc.CreationTimestamp.Time, tc.Log, strings.Join(tc.Errors, "\n"))
+			}
+		}
+
+		suites = append(suites, ts)
+	}
+
+	return xunit.NewTestSuites("scorecard", suites)
 }
 
 func (c *scorecardCmd) run() (err error) {
@@ -126,8 +193,17 @@ func (c *scorecardCmd) run() (err error) {
 		log.Fatal(err)
 	}
 
+	podSecFlag := true
+	switch c.podSecurity {
+	case "restricted":
+		podSecFlag = true
+	case "legacy":
+		podSecFlag = false
+	}
+
 	o := scorecard.Scorecard{
 		SkipCleanup: c.skipCleanup,
+		PodSecurity: podSecFlag,
 	}
 
 	configPath := c.config
@@ -152,15 +228,22 @@ func (c *scorecardCmd) run() (err error) {
 	if c.list {
 		scorecardTests = o.List()
 	} else {
+		runnerSA := c.serviceAccount
+		if o.Config.ServiceAccount != "" {
+			runnerSA = o.Config.ServiceAccount
+		}
 		runner := scorecard.PodTestRunner{
-			ServiceAccount: c.serviceAccount,
+			ServiceAccount: runnerSA,
 			Namespace:      scorecard.GetKubeNamespace(c.kubeconfig, c.namespace),
 			BundlePath:     c.bundle,
+			TestOutput:     c.testOutput,
 			BundleMetadata: metadata,
+			StorageImage:   c.storageImage,
+			UntarImage:     c.untarImage,
 		}
 
 		// Only get the client if running tests.
-		if runner.Client, err = scorecard.GetKubeClient(c.kubeconfig); err != nil {
+		if runner.Client, runner.RESTConfig, err = scorecard.GetKubeClient(c.kubeconfig); err != nil {
 			return fmt.Errorf("error getting kubernetes client: %w", err)
 		}
 
@@ -171,6 +254,12 @@ func (c *scorecardCmd) run() (err error) {
 
 		scorecardTests, err = o.Run(ctx)
 		if err != nil {
+			// if we got a timeout; printout the test results if there are any
+			if err == context.DeadlineExceeded {
+				if errpo := c.printOutput(scorecardTests); errpo != nil {
+					log.Fatal(errpo)
+				}
+			}
 			return fmt.Errorf("error running tests %w", err)
 		}
 	}
@@ -211,5 +300,5 @@ func extractBundleImage(bundleImage string) (string, error) {
 		logger = log.WithFields(log.Fields{"bundle": bundleImage})
 	}
 	// FEAT: enable explicit local image extraction.
-	return registryutil.ExtractBundleImage(context.TODO(), logger, bundleImage, false)
+	return registryutil.ExtractBundleImage(context.TODO(), logger, bundleImage, false, false, false)
 }

@@ -16,20 +16,20 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/operator-framework/operator-registry/pkg/lib/bundle"
-	"sigs.k8s.io/kubebuilder/v3/test/e2e/utils"
 	"sigs.k8s.io/yaml"
 
 	"github.com/operator-framework/operator-sdk/internal/testutils"
 	"github.com/operator-framework/operator-sdk/internal/util/projutil"
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
 )
 
 // TestIntegration tests operator-sdk projects with OLM.
@@ -42,7 +42,8 @@ func TestIntegration(t *testing.T) {
 }
 
 var (
-	tc testutils.TestContext
+	tc     testutils.TestContext
+	onKind bool
 )
 
 var _ = BeforeSuite(func() {
@@ -62,28 +63,51 @@ var _ = BeforeSuite(func() {
 	tc.BundleImageName = fmt.Sprintf("quay.io/integration/%s-bundle:0.0.1", tc.ProjectName)
 
 	By("copying sample to a temporary e2e directory")
-	Expect(exec.Command("cp", "-r", "../../testdata/go/v3/memcached-operator", tc.Dir).Run()).To(Succeed())
+	Expect(exec.Command("cp", "-r", "../../testdata/go/v4/memcached-operator", tc.Dir).Run()).To(Succeed())
 
 	By("updating the project configuration")
-	updateProjectConfigs(tc)
+	Expect(tc.AddPackagemanifestsTarget(projutil.OperatorTypeGo)).To(Succeed())
 
 	By("installing OLM")
-	Expect(tc.InstallOLMVersion("0.15.1")).To(Succeed())
+	Expect(tc.InstallOLMVersion(testutils.OlmVersionForTestSuite)).To(Succeed())
 
 	By("installing prometheus-operator")
 	Expect(tc.InstallPrometheusOperManager()).To(Succeed())
 
+	// Previously, we used kube-rbac-proxy, which generated TLS certificates on the fly —
+	// a practice not recommended and also deprecated on it due this reason.
+	//
+	// Newer versions of the scaffolding support passing real certificates to the metrics server
+	// using cert-manager. However, the `packagemanifests` command does not support this capability.
+	// Since `packagemanifests` is deprecated and will be removed in the future, we are choosing
+	// not to implement support for cert-manager in this context.
+	//
+	// Therefore, for testing purposes — specifically when using `packagemanifests` — we are
+	// disabling the metrics server with cert-manager.
+	By("Disabling metrics with certs - no supported by packagemanifests")
+	// nolint: errcheck
+	kbutil.CommentCode(filepath.Join(tc.Dir, "config", "default", "kustomization.yaml"), targetMetricsCertFragment, "#")
+
 	By("building the manager image")
 	Expect(tc.Make("docker-build", "IMG="+tc.ImageName)).To(Succeed())
 
-	if tc.IsRunningOnKind() {
+	onKind, err = tc.IsRunningOnKind()
+	Expect(err).NotTo(HaveOccurred())
+	if onKind {
 		By("loading the required images into Kind cluster")
 		Expect(tc.LoadImageToKindCluster()).To(Succeed())
 	}
 
-	By("generating the operator package manifests")
-	err = tc.Make("packagemanifests", "IMG="+tc.ImageName)
+	By("generating the operator package manifests and enabling AllNamespaces InstallMode")
+	Expect(tc.Make("packagemanifests", "IMG="+tc.ImageName)).To(Succeed())
+	csv, err := readCSV(&tc, "0.0.1", false)
 	Expect(err).NotTo(HaveOccurred())
+	for i := range csv.Spec.InstallModes {
+		if csv.Spec.InstallModes[i].Type == "AllNamespaces" {
+			csv.Spec.InstallModes[i].Supported = true
+		}
+	}
+	Expect(writeCSV(&tc, "0.0.1", csv, false)).To(Succeed())
 
 	// TODO(estroz): enable when bundles can be tested locally.
 	//
@@ -99,6 +123,10 @@ var _ = BeforeSuite(func() {
 	_, err = tc.Kubectl.Command("create", "namespace", tc.Kubectl.Namespace)
 	Expect(err).NotTo(HaveOccurred())
 })
+
+const targetMetricsCertFragment = `- path: cert_metrics_manager_patch.yaml
+  target:
+    kind: Deployment`
 
 var _ = AfterSuite(func() {
 	By("uninstalling OLM")
@@ -116,54 +144,56 @@ var _ = AfterSuite(func() {
 
 func warn(output string, err error) {
 	if err != nil {
-		fmt.Fprintf(GinkgoWriter, "warning: %s", err)
+		fmt.Fprintf(GinkgoWriter, "warning: %s\n%s", err, output)
 	}
 }
 
-func runPackageManifestsFor(tc *testutils.TestContext) func(...string) error {
-	return func(args ...string) error {
-		allArgs := []string{"run", "packagemanifests", "--timeout", "4m", "--namespace", tc.Kubectl.Namespace}
-		output, err := tc.Run(exec.Command(tc.BinaryName, append(allArgs, args...)...))
-		if err == nil {
-			fmt.Fprintln(GinkgoWriter, string(output))
-		}
+func runPackageManifests(tc *testutils.TestContext, args ...string) error {
+	allArgs := []string{"run", "packagemanifests", "--timeout", "6m", "--namespace", tc.Kubectl.Namespace}
+	output, err := tc.Run(exec.Command(tc.BinaryName, append(allArgs, args...)...))
+	if err == nil {
+		fmt.Fprintln(GinkgoWriter, string(output))
+	}
+	return err
+}
+
+func cleanup(tc *testutils.TestContext) (string, error) {
+	allArgs := []string{"cleanup", tc.ProjectName, "--timeout", "4m", "--namespace", tc.Kubectl.Namespace}
+	output, err := tc.Run(exec.Command(tc.BinaryName, allArgs...))
+	if err == nil {
+		fmt.Fprintln(GinkgoWriter, string(output))
+	}
+	return string(output), err
+}
+
+func readCSV(tc *testutils.TestContext, version string, isBundle bool) (*v1alpha1.ClusterServiceVersion, error) {
+	b, err := os.ReadFile(csvPath(tc, version, isBundle))
+	if err != nil {
+		return nil, err
+	}
+	csv := &v1alpha1.ClusterServiceVersion{}
+	if err := yaml.Unmarshal(b, csv); err != nil {
+		return nil, err
+	}
+	return csv, nil
+}
+
+func writeCSV(tc *testutils.TestContext, version string, csv *v1alpha1.ClusterServiceVersion, isBundle bool) error {
+	b, err := yaml.Marshal(csv)
+	if err != nil {
 		return err
 	}
-}
-
-func cleanupFor(tc *testutils.TestContext) func() (string, error) {
-	return func() (string, error) {
-		allArgs := []string{"cleanup", tc.ProjectName, "--timeout", "4m", "--namespace", tc.Kubectl.Namespace}
-		output, err := tc.Run(exec.Command(tc.BinaryName, allArgs...))
-		if err == nil {
-			fmt.Fprintln(GinkgoWriter, string(output))
-		}
-		return string(output), err
+	f, err := os.OpenFile(csvPath(tc, version, isBundle), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		return err
 	}
-}
-
-func readCSVFor(tc *testutils.TestContext, isBundle bool) func(string) (*v1alpha1.ClusterServiceVersion, error) {
-	return func(version string) (*v1alpha1.ClusterServiceVersion, error) {
-		b, err := ioutil.ReadFile(csvPath(tc, version, isBundle))
-		if err != nil {
-			return nil, err
-		}
-		csv := &v1alpha1.ClusterServiceVersion{}
-		if err := yaml.Unmarshal(b, csv); err != nil {
-			return nil, err
-		}
-		return csv, nil
+	if _, err := f.Write(b); err != nil {
+		return err
 	}
-}
-
-func writeCSVFor(tc *testutils.TestContext, isBundle bool) func(*v1alpha1.ClusterServiceVersion) error {
-	return func(csv *v1alpha1.ClusterServiceVersion) error {
-		b, err := yaml.Marshal(csv)
-		if err != nil {
-			return err
-		}
-		return ioutil.WriteFile(csvPath(tc, csv.Spec.Version.String(), isBundle), b, 0644)
+	if err := f.Sync(); err != nil {
+		return err
 	}
+	return f.Close()
 }
 
 func csvPath(tc *testutils.TestContext, version string, isBundle bool) string {
@@ -173,48 +203,3 @@ func csvPath(tc *testutils.TestContext, version string, isBundle bool) string {
 	}
 	return filepath.Join(tc.Dir, "packagemanifests", version, fileName)
 }
-
-func updateProjectConfigs(tc testutils.TestContext) {
-	defaultKustomization := filepath.Join(tc.Dir, "config", "default", "kustomization.yaml")
-	ExpectWithOffset(1, testutils.ReplaceInFile(defaultKustomization,
-		"- ../certmanager",
-		"#- ../certmanager",
-	)).To(Succeed())
-	ExpectWithOffset(1, testutils.ReplaceInFile(defaultKustomization,
-		"- manager_webhook_patch.yaml",
-		"#- manager_webhook_patch.yaml",
-	)).To(Succeed())
-
-	olmManagerWebhookPatchFile := filepath.Join(tc.Dir, "config", "default", "olm_manager_webhook_patch.yaml")
-	ExpectWithOffset(1, ioutil.WriteFile(olmManagerWebhookPatchFile, []byte(olmManagerWebhookPatch), 0644)).To(Succeed())
-
-	ExpectWithOffset(1, utils.InsertCode(filepath.Join(tc.Dir, "config", "manifests", "kustomization.yaml"),
-		"- ../scorecard",
-		defaultKustomizationOLMWebhookPatch,
-	)).To(Succeed())
-
-	ExpectWithOffset(1, tc.AddPackagemanifestsTarget(projutil.OperatorTypeGo)).To(Succeed())
-}
-
-// Exposes port 9443 for the OLM-managed webhook server.
-const defaultKustomizationOLMWebhookPatch = `
-patchesStrategicMerge:
-- olm_manager_webhook_patch.yaml
-`
-
-const olmManagerWebhookPatch = `
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: controller-manager
-  namespace: system
-spec:
-  template:
-    spec:
-      containers:
-      - name: manager
-        ports:
-        - containerPort: 9443
-          name: webhook-server
-          protocol: TCP
-`

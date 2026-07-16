@@ -18,11 +18,11 @@ import (
 	"os"
 	"path/filepath"
 
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
+
 	log "github.com/sirupsen/logrus"
 
 	"github.com/operator-framework/operator-sdk/hack/generate/samples/internal/pkg"
-	"github.com/operator-framework/operator-sdk/internal/testutils"
-	"github.com/operator-framework/operator-sdk/internal/util"
 )
 
 // Memcached defines the Memcached Sample in Helm
@@ -75,7 +75,7 @@ func (mh *Memcached) Run() {
 	// role and cause sanity testing to fail.
 	os.Setenv("KUBECONFIG", "broken_so_we_generate_static_default_rules")
 
-	helmChartPath := "../../../hack/generate/samples/internal/helm/testdata/memcached-0.0.1.tgz"
+	helmChartPath := "../../../hack/generate/samples/internal/helm/testdata/memcached-0.0.2.tgz"
 	log.Infof("creating the project using the helm chart in: (%v)", helmChartPath)
 	err := mh.ctx.Init(
 		"--plugins", "helm",
@@ -86,21 +86,24 @@ func (mh *Memcached) Run() {
 		"--helm-chart", helmChartPath)
 	pkg.CheckError("creating the project", err)
 
+	err = mh.ctx.UncommentRestrictivePodStandards()
+	pkg.CheckError("creating the bundle", err)
+
 	log.Infof("customizing the sample")
-	err = util.ReplaceInFile(
+	err = kbutil.ReplaceInFile(
 		filepath.Join(mh.ctx.Dir, "config", "samples", "cache_v1alpha1_memcached.yaml"),
 		"securityContext:\n    enabled: true", "securityContext:\n    enabled: false")
 	pkg.CheckError("customizing the sample", err)
 
 	log.Infof("enabling prometheus metrics")
-	err = testutils.UncommentCode(
+	err = kbutil.UncommentCode(
 		filepath.Join(mh.ctx.Dir, "config", "default", "kustomization.yaml"),
 		"#- ../prometheus", "#")
 	pkg.CheckError("enabling prometheus metrics", err)
 
 	log.Infof("adding customized roles")
-	err = util.ReplaceInFile(filepath.Join(mh.ctx.Dir, "config", "rbac", "role.yaml"),
-		"#+kubebuilder:scaffold:rules", policyRolesFragment)
+	err = kbutil.ReplaceInFile(filepath.Join(mh.ctx.Dir, "config", "rbac", "role.yaml"),
+		"# +kubebuilder:scaffold:rules", policyRolesFragment)
 	pkg.CheckError("adding customized roles", err)
 
 	log.Infof("creating the bundle")
@@ -110,9 +113,94 @@ func (mh *Memcached) Run() {
 	log.Infof("striping bundle annotations")
 	err = mh.ctx.StripBundleAnnotations()
 	pkg.CheckError("striping bundle annotations", err)
+
+	log.Infof("setting createdAt annotation")
+	csv := filepath.Join(mh.ctx.Dir, "bundle", "manifests", mh.ctx.ProjectName+".clusterserviceversion.yaml")
+	err = kbutil.ReplaceRegexInFile(csv, "createdAt:.*", createdAt)
+	pkg.CheckError("setting createdAt annotation", err)
 }
 
+const createdAt = `createdAt: "2022-11-08T17:26:37Z"`
+
 const policyRolesFragment = `
+##
+## Base operator rules
+##
+# We need to get namespaces so the operator can read namespaces to ensure they exist
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+# We need to manage Helm release secrets
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - "*"
+# We need to create events on CRs about things happening during reconciliation
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+
+##
+## Rules for cache.example.com/v1alpha1, Kind: Memcached
+##
+- apiGroups:
+  - cache.example.com
+  resources:
+  - memcacheds
+  - memcacheds/status
+  - memcacheds/finalizers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  - services/finalizers
+  - endpoints
+  - persistentvolumeclaims
+  - events
+  - configmaps
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  - replicasets
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+
+
 ##
 ## Rules customized for cache.example.com/v1alpha1, Kind: Memcached
 ##

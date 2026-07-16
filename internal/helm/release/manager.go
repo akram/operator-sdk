@@ -51,12 +51,13 @@ type Manager interface {
 	ReleaseName() string
 	IsInstalled() bool
 	IsUpgradeRequired() bool
-	Sync(context.Context) error
-	InstallRelease(context.Context, ...InstallOption) (*rpb.Release, error)
-	UpgradeRelease(context.Context, ...UpgradeOption) (*rpb.Release, *rpb.Release, error)
+	Sync() error
+	InstallRelease(...InstallOption) (*rpb.Release, error)
+	UpgradeRelease(...UpgradeOption) (*rpb.Release, *rpb.Release, error)
+	RollBack(...RollBackOption) error
 	ReconcileRelease(context.Context) (*rpb.Release, error)
-	UninstallRelease(context.Context, ...UninstallOption) (*rpb.Release, error)
-	CleanupRelease(context.Context, string) (bool, error)
+	UninstallRelease(...UninstallOption) (*rpb.Release, error)
+	CleanupRelease(string) (bool, error)
 }
 
 type manager struct {
@@ -67,18 +68,21 @@ type manager struct {
 	releaseName string
 	namespace   string
 
-	values map[string]interface{}
+	values map[string]any
 	status *types.HelmAppStatus
 
 	isInstalled       bool
 	isUpgradeRequired bool
 	deployedRelease   *rpb.Release
 	chart             *cpb.Chart
+
+	dryRunOption string
 }
 
 type InstallOption func(*action.Install) error
 type UpgradeOption func(*action.Upgrade) error
 type UninstallOption func(*action.Uninstall) error
+type RollBackOption func(*action.Rollback) error
 
 // ReleaseName returns the name of the release.
 func (m manager) ReleaseName() string {
@@ -95,7 +99,7 @@ func (m manager) IsUpgradeRequired() bool {
 
 // Sync ensures the Helm storage backend is in sync with the status of the
 // custom resource.
-func (m *manager) Sync(ctx context.Context) error {
+func (m *manager) Sync() error {
 	// Get release history for this release name
 	releases, err := m.storageBackend.History(m.releaseName)
 	if err != nil && !notFoundErr(err) {
@@ -153,15 +157,16 @@ func (m manager) getDeployedRelease() (*rpb.Release, error) {
 }
 
 func (m manager) getCandidateRelease(namespace, name string, chart *cpb.Chart,
-	values map[string]interface{}) (*rpb.Release, error) {
+	values map[string]any) (*rpb.Release, error) {
 	upgrade := action.NewUpgrade(m.actionConfig)
 	upgrade.Namespace = namespace
 	upgrade.DryRun = true
+	upgrade.DryRunOption = m.dryRunOption
 	return upgrade.Run(name, chart, values)
 }
 
 // InstallRelease performs a Helm release install.
-func (m manager) InstallRelease(ctx context.Context, opts ...InstallOption) (*rpb.Release, error) {
+func (m manager) InstallRelease(opts ...InstallOption) (*rpb.Release, error) {
 	install := action.NewInstall(m.actionConfig)
 	install.ReleaseName = m.releaseName
 	install.Namespace = m.namespace
@@ -202,10 +207,13 @@ func ForceUpgrade(force bool) UpgradeOption {
 	}
 }
 
+var ErrUpgradeFailed = errors.New("upgrade failed; rollback required")
+
 // UpgradeRelease performs a Helm release upgrade.
-func (m manager) UpgradeRelease(ctx context.Context, opts ...UpgradeOption) (*rpb.Release, *rpb.Release, error) {
+func (m manager) UpgradeRelease(opts ...UpgradeOption) (*rpb.Release, *rpb.Release, error) {
 	upgrade := action.NewUpgrade(m.actionConfig)
 	upgrade.Namespace = m.namespace
+
 	for _, o := range opts {
 		if err := o(upgrade); err != nil {
 			return nil, nil, fmt.Errorf("failed to apply upgrade option: %w", err)
@@ -216,22 +224,42 @@ func (m manager) UpgradeRelease(ctx context.Context, opts ...UpgradeOption) (*rp
 	if err != nil {
 		// Workaround for helm/helm#3338
 		if upgradedRelease != nil {
-			rollback := action.NewRollback(m.actionConfig)
-			rollback.Force = true
-
 			// As of Helm 2.13, if UpgradeRelease returns a non-nil release, that
 			// means the release was also recorded in the release store.
 			// Therefore, we should perform the rollback when we have a non-nil
 			// release. Any rollback error here would be unexpected, so always
 			// log both the upgrade and rollback errors.
-			rollbackErr := rollback.Run(m.releaseName)
-			if rollbackErr != nil {
-				return nil, nil, fmt.Errorf("failed upgrade (%s) and failed rollback: %w", err, rollbackErr)
-			}
+			fmt.Printf("release upgrade failed; %v", err)
+
+			return nil, nil, ErrUpgradeFailed
 		}
 		return nil, nil, fmt.Errorf("failed to upgrade release: %w", err)
 	}
 	return m.deployedRelease, upgradedRelease, err
+}
+
+func ForceRollback(force bool) RollBackOption {
+	return func(r *action.Rollback) error {
+		r.Force = force
+		return nil
+	}
+}
+
+// RollBack attempts to reverse any partially applied releases
+func (m manager) RollBack(opts ...RollBackOption) error {
+	rollback := action.NewRollback(m.actionConfig)
+
+	for _, fn := range opts {
+		if err := fn(rollback); err != nil {
+			return fmt.Errorf("failed to apply rollback option: %w", err)
+		}
+	}
+
+	if err := rollback.Run(m.releaseName); err != nil {
+		return fmt.Errorf("rollback failed: %w", err)
+	}
+
+	return nil
 }
 
 // ReconcileRelease creates or patches resources as necessary to match the
@@ -322,7 +350,15 @@ func createPatch(existing runtime.Object, expected *resource.Info) ([]byte, apit
 	}
 
 	patch, err := strategicpatch.CreateThreeWayMergePatch(expectedJSON, expectedJSON, existingJSON, patchMeta, true)
-	return patch, apitypes.StrategicMergePatchType, err
+	if err != nil {
+		return nil, apitypes.StrategicMergePatchType, err
+	}
+	// An empty patch could be in the form of "{}" which represents an empty map out of the 3-way merge;
+	// filter them out here too to avoid sending the apiserver empty patch requests.
+	if len(patch) == 0 || bytes.Equal(patch, []byte("{}")) {
+		return nil, apitypes.StrategicMergePatchType, nil
+	}
+	return patch, apitypes.StrategicMergePatchType, nil
 }
 
 func createJSONMergePatch(existingJSON, expectedJSON []byte) ([]byte, error) {
@@ -338,7 +374,7 @@ func createJSONMergePatch(existingJSON, expectedJSON []byte) ([]byte, error) {
 	// All "add" operations without a value (null) can be ignored
 	patchOps := make([]jsonpatch.JsonPatchOperation, 0)
 	for _, op := range ops {
-		if op.Operation != "remove" && !(op.Operation == "add" && op.Value == nil) {
+		if op.Operation != "remove" && (op.Operation != "add" || op.Value != nil) {
 			patchOps = append(patchOps, op)
 		}
 	}
@@ -354,7 +390,7 @@ func createJSONMergePatch(existingJSON, expectedJSON []byte) ([]byte, error) {
 }
 
 // UninstallRelease performs a Helm release uninstall.
-func (m manager) UninstallRelease(ctx context.Context, opts ...UninstallOption) (*rpb.Release, error) {
+func (m manager) UninstallRelease(opts ...UninstallOption) (*rpb.Release, error) {
 	uninstall := action.NewUninstall(m.actionConfig)
 	for _, o := range opts {
 		if err := o(uninstall); err != nil {
@@ -370,7 +406,7 @@ func (m manager) UninstallRelease(ctx context.Context, opts ...UninstallOption) 
 
 // CleanupRelease deletes resources if they are not deleted already.
 // Return true if all the resources are deleted, false otherwise.
-func (m manager) CleanupRelease(ctx context.Context, manifest string) (bool, error) {
+func (m manager) CleanupRelease(manifest string) (bool, error) {
 	dc, err := m.actionConfig.RESTClientGetter.ToDiscoveryClient()
 	if err != nil {
 		return false, fmt.Errorf("failed to get Kubernetes discovery client: %w", err)
@@ -394,7 +430,7 @@ func (m manager) CleanupRelease(ctx context.Context, manifest string) (bool, err
 	if err != nil {
 		return false, fmt.Errorf("failed to build resources from manifests: %w", err)
 	}
-	if resources == nil || len(resources) <= 0 {
+	if len(resources) <= 0 {
 		return true, nil
 	}
 	for _, resource := range resources {

@@ -19,7 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/operator-framework/operator-sdk/internal/generate/packagemanifest"
 	"github.com/operator-framework/operator-sdk/internal/generate/packagemanifest/packagemanifestfakes"
@@ -46,7 +46,7 @@ var _ = Describe("Running a generate packagemanifests command", func() {
 		versionOne = "1.0.0"
 
 		originalDir = filepath.Join("..", "..", "..", "..", "internal", "cmd", "operator-sdk", "generate", "packagemanifests")
-		testDataDir = filepath.Join("..", "..", "..", "..", "..", "testdata", "go", "v3", "memcached-operator")
+		testDataDir = filepath.Join("..", "..", "..", "..", "..", "testdata", "go", "v4", "memcached-operator")
 	})
 	Describe("validate", func() {
 		It("fails if no version is provided", func() {
@@ -162,7 +162,7 @@ var _ = Describe("Running a generate packagemanifests command", func() {
 			It("fails if no correct operator name can be found", func() {
 				err := c.setDefaults()
 				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("package-name must be set if PROJECT config file is not present"))
+				Expect(err.Error()).To(ContainSubstring("--package <name> must be set if PROJECT config file is not present"))
 			})
 			It("sets fields on the command to default values", func() {
 				c.packageName = "apricot"
@@ -196,7 +196,7 @@ var _ = Describe("Running a generate packagemanifests command", func() {
 				err := c.setDefaults()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(c.packageName).To(Equal("memcached-operator"))
-				Expect(c.layout).To(Equal("go.kubebuilder.io/v3"))
+				Expect(c.layout).To(Equal("go.kubebuilder.io/v4"))
 			})
 			It("doesn't overwrite the package name if it's already set", func() {
 				c.packageName = "cherry"
@@ -204,7 +204,7 @@ var _ = Describe("Running a generate packagemanifests command", func() {
 				err := c.setDefaults()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(c.packageName).To(Equal("cherry"))
-				Expect(c.layout).To(Equal("go.kubebuilder.io/v3"))
+				Expect(c.layout).To(Equal("go.kubebuilder.io/v4"))
 			})
 		})
 		Context("an invalid project file is present", func() {

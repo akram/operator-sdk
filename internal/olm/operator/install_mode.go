@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/operator-framework/api/pkg/operators/v1alpha1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/utils/set"
 )
 
 type InstallMode struct {
@@ -38,8 +38,8 @@ func (i *InstallMode) Set(str string) error {
 	split := strings.SplitN(str, "=", 2)
 	i.InstallModeType = v1alpha1.InstallModeType(split[0])
 	if len(split) == 2 {
-		namespaces := strings.Split(split[1], ",")
-		for _, ns := range namespaces {
+		namespaces := strings.SplitSeq(split[1], ",")
+		for ns := range namespaces {
 			i.TargetNamespaces = append(i.TargetNamespaces, strings.TrimSpace(ns))
 		}
 		sort.Strings(i.TargetNamespaces)
@@ -131,8 +131,8 @@ func (i InstallMode) CheckCompatibility(csv *v1alpha1.ClusterServiceVersion, ope
 
 // GetSupportedInstallModes returns the given slice of InstallModes as a
 // String set.
-func GetSupportedInstallModes(csvInstallModes []v1alpha1.InstallMode) sets.String {
-	supported := sets.NewString()
+func GetSupportedInstallModes(csvInstallModes []v1alpha1.InstallMode) set.Set[string] {
+	supported := set.New[string]()
 	for _, im := range csvInstallModes {
 		if im.Supported {
 			supported.Insert(string(im.Type))

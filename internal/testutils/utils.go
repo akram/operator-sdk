@@ -15,21 +15,18 @@
 package testutils
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	kbtestutils "sigs.k8s.io/kubebuilder/v3/test/e2e/utils"
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
+	. "github.com/onsi/gomega"    //nolint:staticcheck
+	kbutil "sigs.k8s.io/kubebuilder/v4/pkg/plugin/util"
+	kbtestutils "sigs.k8s.io/kubebuilder/v4/test/e2e/utils"
 )
 
 const BinaryName = "operator-sdk"
@@ -41,8 +38,6 @@ type TestContext struct {
 	BundleImageName string
 	// ProjectName store the project name
 	ProjectName string
-	// Kubectx stores the k8s context from where the tests are running
-	Kubectx string
 	// isPrometheusManagedBySuite is true when the suite tests is installing/uninstalling the Prometheus
 	isPrometheusManagedBySuite bool
 	// isOLMManagedBySuite is true when the suite tests is installing/uninstalling the OLM
@@ -94,7 +89,7 @@ func makeBundleImageName(projectName string) string {
 	return fmt.Sprintf("quay.io/example/%s-bundle:v0.0.1", projectName)
 }
 
-// InstallOLM runs 'operator-sdk olm install' for specific version
+// InstallOLMVersion runs 'operator-sdk olm install' for specific version
 // and returns any errors emitted by that command.
 func (tc TestContext) InstallOLMVersion(version string) error {
 	cmd := exec.Command(tc.BinaryName, "olm", "install", "--version", version, "--timeout", "4m")
@@ -102,7 +97,7 @@ func (tc TestContext) InstallOLMVersion(version string) error {
 	return err
 }
 
-// InstallOLM runs 'operator-sdk olm uninstall' and logs any errors emitted by that command.
+// UninstallOLM runs 'operator-sdk olm uninstall' and logs any errors emitted by that command.
 func (tc TestContext) UninstallOLM() {
 	cmd := exec.Command(tc.BinaryName, "olm", "uninstall")
 	if _, err := tc.Run(cmd); err != nil {
@@ -112,47 +107,20 @@ func (tc TestContext) UninstallOLM() {
 
 // ReplaceInFile replaces all instances of old with new in the file at path.
 // todo(camilamacedo86): this func can be pushed to upstream/kb
-func ReplaceInFile(path, old, new string) error {
+func ReplaceInFile(path, o, n string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	b, err := ioutil.ReadFile(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(b), old) {
+	if !strings.Contains(string(b), o) {
 		return errors.New("unable to find the content to be replaced")
 	}
-	s := strings.Replace(string(b), old, new, -1)
-	err = ioutil.WriteFile(path, []byte(s), info.Mode())
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ReplaceRegexInFile finds all strings that match `match` and replaces them
-// with `replace` in the file at path.
-// todo(camilamacedo86): this func can be pushed to upstream/kb
-func ReplaceRegexInFile(path, match, replace string) error {
-	matcher, err := regexp.Compile(match)
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	b, err := ioutil.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	s := matcher.ReplaceAllString(string(b), replace)
-	if s == string(b) {
-		return errors.New("unable to find the content to be replaced")
-	}
-	err = ioutil.WriteFile(path, []byte(s), info.Mode())
+	s := strings.ReplaceAll(string(b), o, n)
+	err = os.WriteFile(path, []byte(s), info.Mode())
 	if err != nil {
 		return err
 	}
@@ -169,56 +137,6 @@ func (tc TestContext) LoadImageToKindClusterWithName(image string) error {
 	cmd := exec.Command("kind", kindOptions...)
 	_, err := tc.Run(cmd)
 	return err
-}
-
-// UncommentCode searches for target in the file and remove the comment prefix
-// of the target content. The target content may span multiple lines.
-// todo(camilamacedo86): this func exists in upstream/kb but there the error is not thrown. We need to
-// push this change. See: https://github.com/kubernetes-sigs/kubebuilder/blob/master/test/e2e/utils/util.go
-func UncommentCode(filename, target, prefix string) error {
-	content, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	strContent := string(content)
-
-	idx := strings.Index(strContent, target)
-	if idx < 0 {
-		// todo: push this check to upstream for we do not need have this func here
-		return fmt.Errorf("unable to find the code %s to be uncomment", target)
-	}
-
-	out := new(bytes.Buffer)
-	_, err = out.Write(content[:idx])
-	if err != nil {
-		return err
-	}
-
-	scanner := bufio.NewScanner(bytes.NewBufferString(target))
-	if !scanner.Scan() {
-		return nil
-	}
-	for {
-		_, err := out.WriteString(strings.TrimPrefix(scanner.Text(), prefix))
-		if err != nil {
-			return err
-		}
-		// Avoid writing a newline in case the previous line was the last in target.
-		if !scanner.Scan() {
-			break
-		}
-		if _, err := out.WriteString("\n"); err != nil {
-			return err
-		}
-	}
-
-	_, err = out.Write(content[idx+len(target):])
-	if err != nil {
-		return err
-	}
-	// false positive
-	// nolint:gosec
-	return ioutil.WriteFile(filename, out.Bytes(), 0644)
 }
 
 // InstallPrerequisites will install OLM and Prometheus
@@ -254,8 +172,12 @@ func (tc TestContext) InstallPrerequisites() {
 }
 
 // IsRunningOnKind returns true when the tests are executed in a Kind Cluster
-func (tc TestContext) IsRunningOnKind() bool {
-	return strings.Contains(tc.Kubectx, "kind")
+func (tc TestContext) IsRunningOnKind() (bool, error) {
+	kubectx, err := tc.Kubectl.Command("config", "current-context")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(kubectx, "kind"), nil
 }
 
 // UninstallPrerequisites will uninstall all prerequisites installed via InstallPrerequisites()
@@ -270,26 +192,6 @@ func (tc TestContext) UninstallPrerequisites() {
 	}
 }
 
-// AllowProjectBeMultiGroup will update the PROJECT file with the information to allow we scaffold
-// apis with different groups.
-// todo(camilamacedo86) : remove this helper when the edit plugin via the bin
-// be available. See the Pr: https://github.com/kubernetes-sigs/kubebuilder/pull/1691
-func (tc TestContext) AllowProjectBeMultiGroup() error {
-	const multiGroup = `multigroup: true
-`
-	projectBytes, err := ioutil.ReadFile(filepath.Join(tc.Dir, "PROJECT"))
-	if err != nil {
-		return err
-	}
-
-	projectBytes = append([]byte(multiGroup), projectBytes...)
-	err = ioutil.WriteFile(filepath.Join(tc.Dir, "PROJECT"), projectBytes, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 // WrapWarnOutput is a one-liner to wrap an error from a command that returns (string, error) in a warning.
 func WrapWarnOutput(_ string, err error) {
 	if err != nil {
@@ -300,4 +202,21 @@ func WrapWarnOutput(_ string, err error) {
 // WrapWarn is a one-liner to wrap an error from a command that returns (error) in a warning.
 func WrapWarn(err error) {
 	WrapWarnOutput("", err)
+}
+
+func (tc TestContext) UncommentRestrictivePodStandards() error {
+	configManager := filepath.Join(tc.Dir, "config", "manager", "manager.yaml")
+
+	if err := kbutil.ReplaceInFile(configManager, `# TODO(user): For common cases that do not require escalating privileges
+        # it is recommended to ensure that all your Pods/Containers are restrictive.
+        # More info: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
+        # Please uncomment the following code if your project does NOT have to work on old Kubernetes
+        # versions < 1.19 or on vendors versions which do NOT support this field by default (i.e. Openshift < 4.11 ).
+        # seccompProfile:
+        #   type: RuntimeDefault`, `seccompProfile:
+          type: RuntimeDefault`); err == nil {
+		return err
+	}
+
+	return nil
 }

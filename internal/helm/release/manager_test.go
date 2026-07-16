@@ -29,18 +29,18 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-func newTestUnstructured(containers []interface{}) *unstructured.Unstructured {
+func newTestUnstructured(containers []any) *unstructured.Unstructured {
 	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"kind":       "MyResource",
 			"apiVersion": "myApi",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name":      "test",
 				"namespace": "ns",
 			},
-			"spec": map[string]interface{}{
-				"template": map[string]interface{}{
-					"spec": map[string]interface{}{
+			"spec": map[string]any{
+				"template": map[string]any{
+					"spec": map[string]any{
 						"containers": containers,
 					},
 				},
@@ -72,16 +72,16 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 		patchType apitypes.PatchType
 	}{
 		{
-			o1: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o1: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
-				map[string]interface{}{
+				map[string]any{
 					"name": "test2",
 				},
 			}),
-			o2: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o2: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
 			}),
@@ -89,16 +89,16 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 			patchType: apitypes.JSONPatchType,
 		},
 		{
-			o1: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o1: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
 			}),
-			o2: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o2: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
-				map[string]interface{}{
+				map[string]any{
 					"name": "test2",
 				},
 			}),
@@ -106,13 +106,13 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 			patchType: apitypes.JSONPatchType,
 		},
 		{
-			o1: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o1: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
 			}),
-			o2: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o2: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 					"test": nil,
 				},
@@ -121,13 +121,13 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 			patchType: apitypes.JSONPatchType,
 		},
 		{
-			o1: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o1: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test1",
 				},
 			}),
-			o2: newTestUnstructured([]interface{}{
-				map[string]interface{}{
+			o2: newTestUnstructured([]any{
+				map[string]any{
 					"name": "test2",
 				},
 			}),
@@ -163,7 +163,7 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 			o2: newTestDeployment([]v1.Container{
 				{Name: "test1", LivenessProbe: nil},
 			}),
-			patch:     `{}`,
+			patch:     ``,
 			patchType: apitypes.StrategicMergePatchType,
 		},
 		{
@@ -196,7 +196,7 @@ func TestManagerGenerateStrategicMergePatch(t *testing.T) {
 				},
 				Spec: appsv1.DeploymentSpec{},
 			},
-			patch:     `{}`,
+			patch:     ``,
 			patchType: apitypes.StrategicMergePatchType,
 		},
 	}

@@ -15,12 +15,15 @@
 package flags
 
 import (
+	"crypto/tls"
 	"runtime"
 	"time"
 
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 // Flags - Options to be used by a helm operator
@@ -33,16 +36,16 @@ type Flags struct {
 	LeaderElectionNamespace string
 	MaxConcurrentReconciles int
 	ProbeAddr               string
-
-	// Path to a controller-runtime componentconfig file.
-	// If this is empty, use default values.
-	ManagerConfigPath string
+	SuppressOverrideValues  bool
+	EnableHTTP2             bool
+	SecureMetrics           bool
+	MetricsRequireRBAC      bool
 
 	// If not nil, used to deduce which flags were set in the CLI.
 	flagSet *pflag.FlagSet
 }
 
-// AddTo - Add the helm operator flags to the the flagset
+// AddTo - Add the helm operator flags to the flagset
 func (f *Flags) AddTo(flagSet *pflag.FlagSet) {
 	// Store flagset internally to be used for lookups later.
 	f.flagSet = flagSet
@@ -66,14 +69,12 @@ func (f *Flags) AddTo(flagSet *pflag.FlagSet) {
 		"Maximum number of concurrent reconciles for controllers.",
 	)
 
-	// Controller manager flags.
-	flagSet.StringVar(&f.ManagerConfigPath,
-		"config",
-		"",
-		"The controller will load its initial configuration from this file. "+
-			"Omit this flag to use the default configuration values. "+
-			"Command-line flags override configuration from this file.",
-	)
+	_ = flagSet.MarkDeprecated("config",
+		`controller-runtime has deprecated the ComponentConfig package 
+and as such, the ability to load the configuation from a file. Since the helm operator relies on controller-runtime
+this flag will be removed when upgrading to a version of controller-runtime where the ComponentConfig package has been removed.
+see https://github.com/kubernetes-sigs/controller-runtime/issues/895 for more information.`)
+
 	// TODO(2.0.0): remove
 	flagSet.StringVar(&f.MetricsBindAddress,
 		"metrics-addr",
@@ -119,6 +120,26 @@ func (f *Flags) AddTo(flagSet *pflag.FlagSet) {
 			" holding the leader lock (required if running locally with leader"+
 			" election enabled).",
 	)
+	flagSet.BoolVar(&f.SuppressOverrideValues,
+		"suppress-override-values",
+		false,
+		"Silences the override-value for OverrideValuesInUse events",
+	)
+	flagSet.BoolVar(&f.EnableHTTP2,
+		"enable-http2",
+		false,
+		"enables HTTP/2 on the webhook and metrics servers",
+	)
+	flagSet.BoolVar(&f.SecureMetrics,
+		"metrics-secure",
+		false,
+		"enables secure serving of the metrics endpoint",
+	)
+	flagSet.BoolVar(&f.MetricsRequireRBAC,
+		"metrics-require-rbac",
+		false,
+		"enables protection of the metrics endpoint with RBAC-based authn/authz."+
+			"see https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/metrics/filters#WithAuthenticationAndAuthorization for more info")
 }
 
 // ToManagerOptions uses the flag set in f to configure options.
@@ -130,12 +151,13 @@ func (f *Flags) ToManagerOptions(options manager.Options) manager.Options {
 		return f.flagSet.Changed(flagName)
 	}
 	if f.flagSet == nil {
-		changed = func(flagName string) bool { return false }
+		//nolint:golint
+		changed = func(_ string) bool { return false }
 	}
 
 	// TODO(2.0.0): remove metrics-addr
-	if changed("metrics-bind-address") || changed("metrics-addr") || options.MetricsBindAddress == "" {
-		options.MetricsBindAddress = f.MetricsBindAddress
+	if changed("metrics-bind-address") || changed("metrics-addr") || options.Metrics.BindAddress == "" {
+		options.Metrics.BindAddress = f.MetricsBindAddress
 	}
 	if changed("health-probe-bind-address") || options.HealthProbeBindAddress == "" {
 		options.HealthProbeBindAddress = f.ProbeAddr
@@ -151,7 +173,26 @@ func (f *Flags) ToManagerOptions(options manager.Options) manager.Options {
 		options.LeaderElectionNamespace = f.LeaderElectionNamespace
 	}
 	if options.LeaderElectionResourceLock == "" {
-		options.LeaderElectionResourceLock = resourcelock.ConfigMapsResourceLock
+		options.LeaderElectionResourceLock = resourcelock.LeasesResourceLock
+	}
+
+	disableHTTP2 := func(c *tls.Config) {
+		c.NextProtos = []string{"http/1.1"}
+	}
+	if !f.EnableHTTP2 {
+		options.WebhookServer = webhook.NewServer(webhook.Options{
+			TLSOpts: []func(*tls.Config){disableHTTP2},
+		})
+		options.Metrics.TLSOpts = append(options.Metrics.TLSOpts, disableHTTP2)
+	}
+	options.Metrics.SecureServing = f.SecureMetrics
+
+	if f.MetricsRequireRBAC {
+		// FilterProvider is used to protect the metrics endpoint with authn/authz.
+		// These configurations ensure that only authorized users and service accounts
+		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
+		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/metrics/filters#WithAuthenticationAndAuthorization
+		options.Metrics.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
 	return options

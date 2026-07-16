@@ -56,6 +56,7 @@ metadata:
         }
       ]
     capabilities: Basic Install
+    createdAt: "2022-11-08T17:26:37Z"
   name: memcached-operator.v0.0.1
   namespace: placeholder
 spec:
@@ -74,6 +75,72 @@ spec:
     spec:
       clusterPermissions:
       - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - namespaces
+          verbs:
+          - get
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - '*'
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+        - apiGroups:
+          - cache.example.com
+          resources:
+          - memcacheds
+          - memcacheds/status
+          - memcacheds/finalizers
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          - services
+          - services/finalizers
+          - endpoints
+          - persistentvolumeclaims
+          - events
+          - configmaps
+          - secrets
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - deployments
+          - daemonsets
+          - replicasets
+          - statefulsets
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
         - apiGroups:
           - ""
           resources:
@@ -180,35 +247,34 @@ spec:
           - create
         serviceAccountName: memcached-operator-controller-manager
       deployments:
-      - name: memcached-operator-controller-manager
+      - label:
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: memcached-operator
+          control-plane: controller-manager
+        name: memcached-operator-controller-manager
         spec:
           replicas: 1
           selector:
             matchLabels:
+              app.kubernetes.io/name: memcached-operator
               control-plane: controller-manager
           strategy: {}
           template:
             metadata:
+              annotations:
+                kubectl.kubernetes.io/default-container: manager
               labels:
+                app.kubernetes.io/name: memcached-operator
                 control-plane: controller-manager
             spec:
               containers:
               - args:
-                - --secure-listen-address=0.0.0.0:8443
-                - --upstream=http://127.0.0.1:8080/
-                - --logtostderr=true
-                - --v=10
-                image: gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
-                name: kube-rbac-proxy
-                ports:
-                - containerPort: 8443
-                  name: https
-                resources: {}
-              - args:
-                - --health-probe-bind-address=:8081
-                - --metrics-bind-address=127.0.0.1:8080
+                - --metrics-require-rbac
+                - --metrics-secure
+                - --metrics-bind-address=:8443
                 - --leader-elect
                 - --leader-election-id=memcached-operator
+                - --health-probe-bind-address=:8081
                 image: quay.io/example/memcached-operator:v0.0.1
                 livenessProbe:
                   httpGet:
@@ -225,24 +291,39 @@ spec:
                   periodSeconds: 10
                 resources:
                   limits:
-                    cpu: 100m
-                    memory: 90Mi
+                    cpu: 500m
+                    memory: 128Mi
                   requests:
-                    cpu: 100m
-                    memory: 60Mi
+                    cpu: 10m
+                    memory: 64Mi
                 securityContext:
                   allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
               securityContext:
                 runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
               serviceAccountName: memcached-operator-controller-manager
               terminationGracePeriodSeconds: 10
       permissions:
       - rules:
         - apiGroups:
           - ""
-          - coordination.k8s.io
           resources:
           - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
           - leases
           verbs:
           - get

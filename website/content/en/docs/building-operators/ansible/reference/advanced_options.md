@@ -122,7 +122,7 @@ files might contain something like:
   imagePullPolicy: "Always"
   args:
     # This value applies to all GVKs specified in watches.yaml
-    # that are not overriden by environment variables.
+    # that are not overridden by environment variables.
     - "--ansible-verbosity"
     - "1"
   env:
@@ -242,7 +242,7 @@ Ansible-runner will perform the task relevant to the command specified by the us
         msg: The decrypted value is {{secret.the_secret}}
 ```
 
-Now, let's also assume that we have a password file, `pwd.yml`, that contains the password to decrypt the encrypted text. Then, by running the command `ansible-operator run --ansible-args='--vault-password-file pwd.yml'` the operator will read in the encrypted text from the file and perform decryption using the password stored in the `pwd.yml` file:
+Now, let's also assume that we have a password file, `pwd.yml`, that contains the password to decrypt the encrypted text. Then, by running the command `ansible-operator run --ansible-args='--vault-password-file /absolute/path/to/pwd.yml'` the operator will read in the encrypted text from the file and perform decryption using the password stored in the `pwd.yml` file:
 
 ```
 --------------------------- Ansible Task StdOut -------------------------------
@@ -254,7 +254,42 @@ ok: [localhost] => {
 
 -------------------------------------------------------------------------------
 ```
+
+## Using Ansible Log Events
+
+Using the `--ansible-log-events` CLI flag, you can determine to what degree the Ansible task logs will be outputted. The flag can take any of the following values:
+
+1. `Nothing` - No tasks or task-related logs will be outputted.
+2. `Tasks` - Only Ansible Tasks will be outputted.
+3. `Everything` - All info logs and all tasks will be outputted.
+
+If you want more control over the logs that are outputted, consider using the [Zap Logger][Zap-Logger] and [verbosity annotations][verbosity-annotations] in tandem with the `--ansible-log-events` CLI flag.
+
+## `ansible.sdk.operatorframework.io/reconcile-period` Custom Resource Annotation
+
+You can specify the reconcile period for an Ansible Operator by adding the ansible.sdk.operatorframework.io/reconcile-period key to the custom resource annotations.
+This feature specifies the maximum interval in which a cluster will get reconciled, and defaults to 10 hours if not manually set. If changes are detected in the desired state, the cluster may be reconciled sooner than the specified interval.
+
+The reconcile period can be specified in the custom resource's annotations in the following manner: 
+
+```yaml
+...
+metadata:
+  name: memcached-sample
+  annotations:
+    ansible.sdk.operatorframework.io/reconcile-period: 5s
+...
+```
+
+The key only accepts a value in the `h/m/s` format, such as `1h2m4s`, `3m0s`, or `4s`. Values such as `1x3m9s` are invalid.
+
+**NOTE**: Alternatively, you can specify the reconcile period for Ansible-based Operators in the following ways:
+- Using the `--reconcile-period` command-line flag 
+- Using the 'reconcilePeriod' key in the `watches.yaml` file
+You should not use all three methods to specify a single reconcile period. If all three methods are used simultaneously, the order of precedence is as follows: Custom resource annotations > `watches.yaml` file > command-line flag.
+
+
 [ansible-vault-doc]: https://docs.ansible.com/ansible/latest/user_guide/vault.html
-
-
+[Zap-Logger]: https://github.com/operator-framework/operator-sdk/blob/master/website/content/en/docs/building-operators/golang/references/logging.md#default-zap-logger
+[verbosity-annotations]: https://sdk.operatorframework.io/docs/building-operators/ansible/reference/advanced_options/#ansible-verbosity
 

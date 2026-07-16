@@ -17,7 +17,7 @@ package k8sutil
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 
 	"github.com/operator-framework/operator-registry/pkg/registry"
@@ -38,7 +38,7 @@ func GetCustomResourceDefinitions(crdsDir string) (
 	v1beta1crds []apiextv1beta1.CustomResourceDefinition,
 	err error) {
 
-	infos, err := ioutil.ReadDir(crdsDir)
+	infos, err := os.ReadDir(crdsDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,7 +53,7 @@ func GetCustomResourceDefinitions(crdsDir string) (
 			continue
 		}
 
-		b, err := ioutil.ReadFile(path)
+		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error reading manifest %s: %w", path, err)
 		}
@@ -112,6 +112,10 @@ func GetCustomResourceDefinitions(crdsDir string) (
 func DefinitionsForV1CustomResourceDefinitions(crds ...apiextv1.CustomResourceDefinition) (keys []registry.DefinitionKey) {
 	for _, crd := range crds {
 		for _, ver := range crd.Spec.Versions {
+			if !ver.Served {
+				log.Debugf("Not adding unserved CRD %q version %q to set of owned keys", crd.GetName(), ver.Name)
+				continue
+			}
 			keys = append(keys, registry.DefinitionKey{
 				Name:    crd.GetName(),
 				Group:   crd.Spec.Group,
@@ -136,6 +140,10 @@ func DefinitionsForV1beta1CustomResourceDefinitions(crds ...apiextv1beta1.Custom
 			})
 		}
 		for _, ver := range crd.Spec.Versions {
+			if !ver.Served {
+				log.Debugf("Not adding unserved CRD %q version %q to set of owned keys", crd.GetName(), ver.Name)
+				continue
+			}
 			keys = append(keys, registry.DefinitionKey{
 				Name:    crd.GetName(),
 				Group:   crd.Spec.Group,
@@ -188,8 +196,8 @@ func Convertv1beta1Tov1CustomResourceDefinition(in *apiextv1beta1.CustomResource
 	}
 
 	var out apiextv1.CustomResourceDefinition
-	out.TypeMeta.APIVersion = apiextv1.SchemeGroupVersion.String()
-	out.TypeMeta.Kind = "CustomResourceDefinition"
+	out.APIVersion = apiextv1.SchemeGroupVersion.String()
+	out.Kind = "CustomResourceDefinition"
 	if err := apiextv1.Convert_apiextensions_CustomResourceDefinition_To_v1_CustomResourceDefinition(&unversioned, &out, nil); err != nil {
 		return nil, err
 	}

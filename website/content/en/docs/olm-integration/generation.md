@@ -15,21 +15,19 @@ next version of your Operator.
 ## Overview
 
 Several `operator-sdk` subcommands manage operator-framework manifests and metadata,
-in particular [`ClusterServiceVersion`'s (CSVs)][doc-csv], for an Operator: [`generate bundle`][cli-gen-bundle],
-[`generate packagemanifests`][cli-gen-packagemanifests], and [`generate kustomize manifests`][cli-gen-kustomize-manifests].
-See this [CLI overview][cli-overview] for details on each command. These manifests come in two different formats,
-[bundle][bundle] and [package manifests][package-manifests], which are described in detail below.
-Ideally the bundle format should be used as this is the default packaging format in operator-framework.
-However the package manifests format is still supported by operator-framework tooling.
+in particular [`ClusterServiceVersion`'s (CSVs)][doc-csv], for an Operator: [`generate bundle`][cli-gen-bundle] and [`generate kustomize manifests`][cli-gen-kustomize-manifests].
+See this [CLI overview][cli-overview] for details on each command.
+
+**Note:** The packagemanifests format is deprecated and support will be removed in `operator-sdk` v2.0.0.
 
 ### Kustomize files
 
 `operator-sdk generate kustomize manifests` generates a CSV kustomize base
-`config/manifests/bases/<project-name>.clusterserviceversion.yaml` and a `config/manifests/bases/kustomization.yaml`
+`config/manifests/bases/<project-name>.clusterserviceversion.yaml` and a `config/manifests/kustomization.yaml`
 by default. These files are required as `kustomize build` input in downstream commands.
 
 By default, the command starts an interactive prompt if a CSV base in `config/manifests/bases` is not present
-to collect [UI metadata](#csv-fields). You can disable the interactive prompt by passing `--kustomize=false`.
+to collect [UI metadata](#csv-fields). You can disable the interactive prompt by passing `--interactive=false`.
 
 ```console
 $ operator-sdk generate kustomize manifests
@@ -44,11 +42,30 @@ Comma-separated list of keywords for your operator (required):
 ```
 
 Once this base is written, you may modify any of the fields labeled _user_ in the [fields section](#csv-fields) below.
+These values will persist when generating a bundle, so make necessary metadata changes here and not the generated bundle.
 
 **For Go Operators only:** the command parses [CSV markers][csv-markers] from Go API type definitions, located
 in `./api` for single group projects and `./apis` for multigroup projects, to populate certain CSV fields.
 You can set an alternative path to the API types root directory with `--apis-dir`. These markers are not available
-to Ansible or Helm project types.
+to Ansible or Helm project types. 
+
+The command attempts to process the local types defined in your API.
+If you import a package that uses the same name as a local type, running the command causes an infinite loop. For example:
+```go
+type PodStatus struct {
+  SomeField string
+  // imported type with the same name will infinitely trigger
+  // the parser to process the local PodStatus type
+  Status v1.PodStatus 
+}
+```
+To prevent an infinite loop, edit the local type definition to use a different name. For example:
+```go
+type PodStatusWrapper struct {
+  SomeField string
+  Status v1.PodStatus 
+}
+```
 
 ### ClusterServiceVersion manifests
 
@@ -58,7 +75,7 @@ themselves; this version is present in both their `metadata.name` and `spec.vers
 by `generate <bundle|packagemanifests>` requires certain input manifests to construct a CSV manifest; all inputs
 are read when either command is invoked, along with a CSV's [base](#kustomize-files), to idempotently regenerate a CSV.
 
-The following resource kinds are typically included in a CSV, which are addressed by `config/manifests/bases/kustomization.yaml`:
+The following resource kinds are typically included in a CSV, which are addressed by `config/manifests/kustomization.yaml`:
   - `Role`: define Operator permissions within a namespace.
   - `ClusterRole`: define cluster-wide Operator permissions.
   - `Deployment`: define how the Operator's operand is run in pods.
@@ -102,32 +119,28 @@ import (
 func main() {
   ...
 
-  // Standard Manager setup.
+  // Configure a webhook.Server with the correct path and file names.
+  // If webhookServer is nil, which will be the case of OLM >= 0.17 is available,
+  // the manager will create a server for you using Host, Port,
+  // and the default CertDir, KeyName, and CertName.
+  var webhookServer *webhook.Server
+  const legacyOLMCertDir = "/apiserver.local.config/certificates"
+  if info, err := os.Stat(legacyOLMCertDir); err == nil && info.IsDir() {
+    webhookServer = &webhook.Server{
+      Host:     <some host>, // Set this only if normally set in ctrl.Options below.
+      Port:     <some port>, // Set this only if normally set in ctrl.Options below.
+      CertDir:  legacyOLMCertDir,
+      CertName: "apiserver.crt",
+      KeyName:  "apiserver.key",
+    }
+  }
+
   mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-    Host: <some host>, // May not be configured explicitly.
-    Port: <some port>, // May not be configured explicitly.
+    Host:          <some host>,
+    Port:          <some port>,
+    WebhookServer: webhookServer, // Host/Port will not be used if webhookServer is nil.
   })
-
-  ...
-
-  // Before any webhooks are registered:
-  var certDir, certName, keyName string
-  if info, err := os.Stat("/apiserver.local.config/certificates"); err == nil && info.IsDir() {
-    certDir = "/apiserver.local.config/certificates"
-    certName = "apiserver.crt"
-    keyName = "apiserver.key"
-  }
-  if err = mgr.Add(webhook.Server{
-    Host:     <some host>, // Set this only if set in ctrl.Options above.
-    Port:     <some port>, // Set this only if set in ctrl.Options above.
-    CertDir:  certDir,     // Defaults to the correct path if unset.
-    CertName: certName,    // Defaults to the correct path if unset.
-    KeyName:  keyName,     // Defaults to the correct path if unset.
-  }); err != nil {
-    setupLog.Error(err, "unable to add webhook server")
-    os.Exit(1)
-  }
-
+ 
   // Now you can register webhooks.
   ...
 }
@@ -144,7 +157,7 @@ in case other Operator resources require routing. Feel free to remove it otherwi
 [crd-wh-serviceref]:https://pkg.go.dev/k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1?utm_source=godoc#ServiceReference
 [wh-serviceref]:https://pkg.go.dev/k8s.io/api/admissionregistration/v1?utm_source=godoc#ServiceReference
 [olm-cert-support]:https://olm.operatorframework.io/docs/advanced-tasks/adding-admission-and-conversion-webhooks/#certificate-authority-requirements
-[cm-patch]:https://github.com/operator-framework/operator-sdk/blob/163c657/go/v3/memcached-operator/config/manifests/kustomization.yaml#L12
+[cm-patch]:https://github.com/operator-framework/operator-sdk/blob/163c657/testdata/go/v3/memcached-operator/config/manifests/kustomization.yaml#L12
 
 ## Generate your first release
 
@@ -192,6 +205,9 @@ $ tree ./bundle
         └── config.yaml
 ```
 
+**Important:** bundle generation is supposed to be idempotent, so any changes to CSV fields able to be persisted
+(marked _(user)_ or _(marker)_ [below](#csv-fields)) must be made to the base set of manifests, typically found in `config/`.
+
 Bundle metadata in `bundle/metadata/annotations.yaml` contains information about a particular Operator version
 available in a registry. OLM uses this information to install specific Operator versions and resolve dependencies.
 That file and `bundle.Dockerfile` contain the same [annotations][bundle-metadata], the latter as `LABEL`s,
@@ -221,9 +237,10 @@ You can list all available optional validators by setting the `--list-optional` 
 
 ```console
 $ operator-sdk bundle validate --list-optional
-NAME           LABELS                     DESCRIPTION
-operatorhub    name=operatorhub           OperatorHub.io metadata validation
-               suite=operatorframework
+NAME           LABELS                                                DESCRIPTION
+operatorhub    name=operatorhub                                      OperatorHub.io metadata validation. 
+               suite=operatorframework    
+community      name=community                                        (stage: alpha) Community Operator bundle validation      
 ...
 ```
 
@@ -251,6 +268,12 @@ operator-sdk bundle validate ./bundle --select-optional suite=operatorframework 
 
 Documentation on optional validators:
 - [`operatorhub`][operatorhub_validator]
+
+**Note**: (stage: alpha) The `Community` validator allows you to validate your `bundle.Dockerfile` configuration against its specific criteria using the `image-path` optional key value:
+
+```sh 
+operator-sdk bundle validate ./bundle --select-optional name=community --optional-values=image-path=bundle.Dockerfile
+```
 
 ### Package manifests format
 
@@ -387,8 +410,8 @@ Currently all but `MultiNamespace` are supported by SDK Operators.
 - `spec.customresourcedefinitions`: any CRDs the Operator uses. Certain fields in elements of `owned` will be filled by the SDK.
     - `owned`: all CRDs the Operator deploys itself from it's bundle.
         - `name`: CRD's `metadata.name`.
-        - `kind`: CRD's `metadata.spec.names.kind`.
-        - `version`: CRD's `metadata.spec.version`.
+        - `kind`: CRD's `spec.names.kind`.
+        - `version`: CRD's `spec.version`.
         - `description` _(marker)_ : description of the CRD.
         - `displayName` _(marker)_ : display name of the CRD.
         - `resources` _(marker)_ : any Kubernetes resources used by the CRD, ex. `Pod`'s and `ConfigMap`'s.
@@ -413,7 +436,13 @@ being managed, each with a `name` and `url`.
 - `spec.selector` _(user)_ : selectors by which the Operator can pair resources in a cluster.
 - `spec.icon` _(user)_ : a base64-encoded icon unique to the Operator, set in a `base64data` field with a `mediatype`.
 - `spec.maturity` _(user)_: the Operator's maturity, ex. `alpha`.
+- `spec.minKubeVersion` _(user)_: the minimal Kubernetes version supported by the Operator, ex. `1.16.0`.
 - `spec.webhookdefinitions`: any webhooks the Operator uses.
+- `spec.relatedImages` _(user)_: a list of image tags containing SHA digests [mapped to in-CSV names][relatedimages]
+that your Operator might require to perform their functions.
+    - To get the correct tag for an image available in some remote registry, run `docker inspect --format='{{range $i, $d := .RepoDigests}}{{$d}}{{"\n"}}{{end}}'`
+    and choose the tag for the desired registry.
+- `spec.skips` _(user)_: the names of one or more CSVs that should be skipped in a catalog's upgrade graph.
 
 **\*** `metadata.name` and `spec.version` will only be automatically updated from the base CSV
 when you set `--version` when running `generate <bundle|packagemanifests>`.
@@ -423,13 +452,12 @@ when you set `--version` when running `generate <bundle|packagemanifests>`.
 [cli-overview]:/docs/olm-integration/cli-overview
 [cli-gen-kustomize-manifests]:/docs/cli/operator-sdk_generate_kustomize_manifests
 [cli-gen-bundle]:/docs/cli/operator-sdk_generate_bundle
-[cli-gen-packagemanifests]:/docs/cli/operator-sdk_generate_packagemanifests
 [bundle]: https://github.com/operator-framework/operator-registry/blob/v1.16.1/docs/design/operator-bundle.md
 [bundle-metadata]:https://github.com/operator-framework/operator-registry/blob/v1.12.6/docs/design/operator-bundle.md#bundle-annotations
-[package-manifests]:https://github.com/operator-framework/operator-registry/tree/v1.5.3#manifest-format
 [install-modes]:https://github.com/operator-framework/operator-lifecycle-manager/blob/4197455/Documentation/design/building-your-csv.md#operator-metadata
-[olm-capabilities]:/docs/advanced-topics/operator-capabilities/operator-capabilities
+[olm-capabilities]:/docs/overview/operator-capabilities/
 [csv-markers]:/docs/building-operators/golang/references/markers
 [operatorhub]:https://operatorhub.io/
-[scorecard]:/docs/advanced-topics/scorecard
-[operatorhub_validator]: https://olm.operatorframework.io/docs/tasks/validate-package/#validation
+[scorecard]:/docs/testing-operators/scorecard/
+[operatorhub_validator]:https://olm.operatorframework.io/docs/tasks/creating-operator-bundle/#validating-your-bundle
+[relatedimages]:https://pkg.go.dev/github.com/operator-framework/api@v0.8.1/pkg/operators/v1alpha1#RelatedImage

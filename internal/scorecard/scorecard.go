@@ -26,13 +26,14 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	registryutil "github.com/operator-framework/operator-sdk/internal/registry"
 )
 
 type TestRunner interface {
 	Initialize(context.Context) error
-	RunTest(context.Context, v1alpha3.TestConfiguration) (*v1alpha3.TestStatus, error)
+	RunTest(context.Context, v1alpha3.TestConfiguration, bool) (*v1alpha3.TestStatus, error)
 	Cleanup(context.Context) error
 }
 
@@ -41,16 +42,22 @@ type Scorecard struct {
 	Selector    labels.Selector
 	TestRunner  TestRunner
 	SkipCleanup bool
+	PodSecurity bool
 }
 
 type PodTestRunner struct {
 	Namespace      string
 	ServiceAccount string
 	BundlePath     string
-	BundleMetadata registryutil.Labels
+	TestOutput     string
+	BundleMetadata registryutil.LabelsMap
 	Client         kubernetes.Interface
+	RESTConfig     *rest.Config
+	StorageImage   string
+	UntarImage     string
 
 	configMapName string
+	PodSecurity   bool
 }
 
 type FakeTestRunner struct {
@@ -75,6 +82,7 @@ func (o Scorecard) Run(ctx context.Context) (testOutput v1alpha3.TestList, err e
 		if len(tests) == 0 {
 			continue
 		}
+		tests = o.setTestDefaults(tests)
 
 		output := make(chan v1alpha3.Test, len(tests))
 		if stage.Parallel {
@@ -107,6 +115,15 @@ func (o Scorecard) Run(ctx context.Context) (testOutput v1alpha3.TestList, err e
 	return testOutput, err
 }
 
+func (o Scorecard) setTestDefaults(tests []v1alpha3.TestConfiguration) []v1alpha3.TestConfiguration {
+	for i := range tests {
+		if len(tests[i].Storage.Spec.MountPath.Path) == 0 {
+			tests[i].Storage.Spec.MountPath.Path = o.Config.Storage.Spec.MountPath.Path
+		}
+	}
+	return tests
+}
+
 func (o Scorecard) runStageParallel(ctx context.Context, tests []v1alpha3.TestConfiguration, results chan<- v1alpha3.Test) {
 	var wg sync.WaitGroup
 	for _, t := range tests {
@@ -126,12 +143,14 @@ func (o Scorecard) runStageSequential(ctx context.Context, tests []v1alpha3.Test
 }
 
 func (o Scorecard) runTest(ctx context.Context, test v1alpha3.TestConfiguration) v1alpha3.Test {
-	result, err := o.TestRunner.RunTest(ctx, test)
+	result, err := o.TestRunner.RunTest(ctx, test, o.PodSecurity)
 	if err != nil {
 		result = convertErrorToStatus(err, "")
 	}
 
 	out := v1alpha3.NewTest()
+	//TODO: Add timestamp to result when API version updates
+	//out.Tstamp = time.Now().Format(time.RFC850)
 	out.Spec = test
 	out.Status = *result
 	return out
@@ -170,6 +189,7 @@ func (r *PodTestRunner) Initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error creating ConfigMap %w", err)
 	}
+
 	return nil
 
 }
@@ -185,6 +205,7 @@ func (r FakeTestRunner) Cleanup(ctx context.Context) error {
 
 // Cleanup deletes pods and configmap resources from this test run
 func (r PodTestRunner) Cleanup(ctx context.Context) (err error) {
+
 	err = r.deletePods(ctx, r.configMapName)
 	if err != nil {
 		return err
@@ -193,13 +214,43 @@ func (r PodTestRunner) Cleanup(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 // RunTest executes a single test
-func (r PodTestRunner) RunTest(ctx context.Context, test v1alpha3.TestConfiguration) (*v1alpha3.TestStatus, error) {
+func (r PodTestRunner) RunTest(ctx context.Context, test v1alpha3.TestConfiguration, podSec bool) (*v1alpha3.TestStatus, error) {
+
 	// Create a Pod to run the test
 	podDef := getPodDefinition(r.configMapName, test, r)
+	if podSec {
+		// creating a pod security context to support running in default namespace
+		podSecCtx := v1.PodSecurityContext{}
+		podSecCtx.RunAsNonRoot = &podSec
+		podSecCtx.SeccompProfile = &v1.SeccompProfile{
+			Type: v1.SeccompProfileTypeRuntimeDefault,
+		}
+
+		// creating a security context to be used by all containers in the pod
+		secCtx := v1.SecurityContext{}
+		secCtx.RunAsNonRoot = &podSec
+		secCtx.AllowPrivilegeEscalation = &[]bool{false}[0]
+		secCtx.Capabilities = &v1.Capabilities{
+			Drop: []v1.Capability{
+				"ALL",
+			},
+		}
+
+		podDef.Spec.SecurityContext = &podSecCtx
+
+		podDef.Spec.Containers[0].SecurityContext = &secCtx
+		podDef.Spec.InitContainers[0].SecurityContext = &secCtx
+	}
+
+	if test.Storage.Spec.MountPath.Path != "" {
+		addStorageToPod(podDef, test.Storage.Spec.MountPath.Path, r.StorageImage)
+	}
+
 	pod, err := r.Client.CoreV1().Pods(r.Namespace).Create(ctx, podDef, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
@@ -210,11 +261,19 @@ func (r PodTestRunner) RunTest(ctx context.Context, test v1alpha3.TestConfigurat
 		return nil, err
 	}
 
+	// gather test output if necessary
+	if test.Storage.Spec.MountPath.Path != "" {
+		err := gatherTestOutput(r, test.Labels["suite"], test.Labels["test"], pod.Name, test.Storage.Spec.MountPath.Path)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return r.getTestStatus(ctx, pod), nil
 }
 
 // RunTest executes a single test
-func (r FakeTestRunner) RunTest(ctx context.Context, test v1alpha3.TestConfiguration) (result *v1alpha3.TestStatus, err error) {
+func (r FakeTestRunner) RunTest(ctx context.Context, _ v1alpha3.TestConfiguration, _ bool) (result *v1alpha3.TestStatus, err error) {
 	select {
 	case <-time.After(r.Sleep):
 		return r.TestStatus, r.Error
@@ -231,19 +290,24 @@ func ConfigDocLink() string {
 // checking for a test pod to complete
 func (r PodTestRunner) waitForTestToComplete(ctx context.Context, p *v1.Pod) (err error) {
 
-	podCheck := wait.ConditionFunc(func() (done bool, err error) {
+	podCheck := wait.ConditionWithContextFunc(func(pctx context.Context) (done bool, err error) {
 		var tmp *v1.Pod
-		tmp, err = r.Client.CoreV1().Pods(p.Namespace).Get(ctx, p.Name, metav1.GetOptions{})
+		tmp, err = r.Client.CoreV1().Pods(p.Namespace).Get(pctx, p.Name, metav1.GetOptions{})
 		if err != nil {
 			return true, fmt.Errorf("error getting pod %s %w", p.Name, err)
 		}
-		if tmp.Status.Phase == v1.PodSucceeded || tmp.Status.Phase == v1.PodFailed {
-			return true, nil
+		for _, s := range tmp.Status.ContainerStatuses {
+			if s.Name == "scorecard-test" {
+				if s.State.Terminated != nil {
+					return true, nil
+				}
+			}
 		}
+
 		return false, nil
 	})
 
-	err = wait.PollImmediateUntil(1*time.Second, podCheck, ctx.Done())
+	err = wait.PollUntilContextCancel(ctx, 1*time.Second, false, podCheck)
 	return err
 
 }

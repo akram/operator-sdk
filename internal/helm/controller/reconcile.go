@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	rpb "helm.sh/helm/v3/pkg/release"
@@ -46,13 +48,15 @@ type ReleaseHookFunc func(*rpb.Release) error
 
 // HelmOperatorReconciler reconciles custom resources as Helm releases.
 type HelmOperatorReconciler struct {
-	Client          client.Client
-	EventRecorder   record.EventRecorder
-	GVK             schema.GroupVersionKind
-	ManagerFactory  release.ManagerFactory
-	ReconcilePeriod time.Duration
-	OverrideValues  map[string]string
-	releaseHook     ReleaseHookFunc
+	Client                 client.Client
+	EventRecorder          record.EventRecorder
+	GVK                    schema.GroupVersionKind
+	ManagerFactory         release.ManagerFactory
+	ReconcilePeriod        time.Duration
+	OverrideValues         map[string]string
+	SuppressOverrideValues bool
+	releaseHook            ReleaseHookFunc
+	DryRunOption           string
 }
 
 const (
@@ -61,8 +65,10 @@ const (
 	// Deprecated: use uninstallFinalizer. This will be removed in operator-sdk v2.0.0.
 	uninstallFinalizerLegacy = "uninstall-helm-release"
 
-	helmUpgradeForceAnnotation  = "helm.sdk.operatorframework.io/upgrade-force"
-	helmUninstallWaitAnnotation = "helm.sdk.operatorframework.io/uninstall-wait"
+	helmUpgradeForceAnnotation    = "helm.sdk.operatorframework.io/upgrade-force"
+	helmRollbackForceAnnotation   = "helm.sdk.operatorframework.io/rollback-force"
+	helmUninstallWaitAnnotation   = "helm.sdk.operatorframework.io/uninstall-wait"
+	helmReconcilePeriodAnnotation = "helm.sdk.operatorframework.io/reconcile-period"
 )
 
 // Reconcile reconciles the requested resource by installing, updating, or
@@ -92,24 +98,36 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 		return reconcile.Result{}, err
 	}
 
-	manager, err := r.ManagerFactory.NewManager(o, r.OverrideValues)
+	manager, err := r.ManagerFactory.NewManager(o, r.OverrideValues, r.DryRunOption)
 	if err != nil {
 		log.Error(err, "Failed to get release manager")
 		return reconcile.Result{}, err
 	}
 
 	status := types.StatusFor(o)
+	originalStatus := types.StatusFor(o.DeepCopy())
 	log = log.WithValues("release", manager.ReleaseName())
 
+	reconcileResult := reconcile.Result{RequeueAfter: r.ReconcilePeriod}
+	// Determine the correct reconcile period based on the existing value in the reconciler and the
+	// annotations in the custom resource. If a reconcile period is specified in the custom resource
+	// annotations, this value will take precedence over the existing reconcile period value
+	// (which came from either the command-line flag or the watches.yaml file).
+	finalReconcilePeriod, err := determineReconcilePeriod(r.ReconcilePeriod, o)
+	if err != nil {
+		log.Error(err, "Error: unable to parse reconcile period from the custom resource's annotations")
+		return reconcile.Result{}, err
+	}
+	reconcileResult.RequeueAfter = finalReconcilePeriod
+
 	if o.GetDeletionTimestamp() != nil {
-		if !(controllerutil.ContainsFinalizer(o, uninstallFinalizer) ||
-			controllerutil.ContainsFinalizer(o, uninstallFinalizerLegacy)) {
+		if !controllerutil.ContainsFinalizer(o, uninstallFinalizer) && !controllerutil.ContainsFinalizer(o, uninstallFinalizerLegacy) {
 
 			log.Info("Resource is terminated, skipping reconciliation")
 			return reconcile.Result{}, nil
 		}
 
-		uninstalledRelease, err := manager.UninstallRelease(ctx)
+		uninstalledRelease, err := manager.UninstallRelease()
 		if err != nil && !errors.Is(err, driver.ErrReleaseNotFound) {
 			log.Error(err, "Failed to uninstall release")
 			status.SetCondition(types.HelmAppCondition{
@@ -130,7 +148,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 			log.Info("Release not found")
 		} else {
 			log.Info("Uninstalled release")
-			if log.V(0).Enabled() && uninstalledRelease != nil {
+			if log.V(1).Enabled() && uninstalledRelease != nil {
 				fmt.Println(diff.Generate(uninstalledRelease.Manifest, ""))
 			}
 			if !wait {
@@ -157,7 +175,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 
 		if wait && status.DeployedRelease != nil && status.DeployedRelease.Manifest != "" {
 			log.Info("Uninstall wait")
-			isAllResourcesDeleted, err := manager.CleanupRelease(ctx, status.DeployedRelease.Manifest)
+			isAllResourcesDeleted, err := manager.CleanupRelease(status.DeployedRelease.Manifest)
 			if err != nil {
 				log.Error(err, "Failed to cleanup release")
 				status.SetCondition(types.HelmAppCondition{
@@ -171,7 +189,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 			}
 			if !isAllResourcesDeleted {
 				log.Info("Waiting until all resources are deleted")
-				return reconcile.Result{RequeueAfter: r.ReconcilePeriod}, nil
+				return reconcileResult, nil
 			}
 			status.RemoveCondition(types.ConditionReleaseFailed)
 		}
@@ -201,7 +219,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 		Status: types.StatusTrue,
 	})
 
-	if err := manager.Sync(ctx); err != nil {
+	if err := manager.Sync(); err != nil {
 		log.Error(err, "Failed to sync release")
 		status.SetCondition(types.HelmAppCondition{
 			Type:    types.ConditionIrreconcilable,
@@ -218,10 +236,13 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 
 	if !manager.IsInstalled() {
 		for k, v := range r.OverrideValues {
+			if r.SuppressOverrideValues {
+				v = "****"
+			}
 			r.EventRecorder.Eventf(o, "Warning", "OverrideValuesInUse",
 				"Chart value %q overridden to %q by operator's watches.yaml", k, v)
 		}
-		installedRelease, err := manager.InstallRelease(ctx)
+		installedRelease, err := manager.InstallRelease()
 		if err != nil {
 			log.Error(err, "Release failed")
 			status.SetCondition(types.HelmAppCondition{
@@ -252,7 +273,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 		}
 
 		log.Info("Installed release")
-		if log.V(0).Enabled() {
+		if log.V(1).Enabled() {
 			fmt.Println(diff.Generate("", installedRelease.Manifest))
 		}
 		log.V(1).Info("Config values", "values", installedRelease.Config)
@@ -271,11 +292,10 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 			Manifest: installedRelease.Manifest,
 		}
 		err = r.updateResourceStatus(ctx, o, status)
-		return reconcile.Result{RequeueAfter: r.ReconcilePeriod}, err
+		return reconcileResult, err
 	}
 
-	if !(controllerutil.ContainsFinalizer(o, uninstallFinalizer) ||
-		controllerutil.ContainsFinalizer(o, uninstallFinalizerLegacy)) {
+	if !controllerutil.ContainsFinalizer(o, uninstallFinalizer) && !controllerutil.ContainsFinalizer(o, uninstallFinalizerLegacy) {
 
 		log.V(1).Info("Adding finalizer", "finalizer", uninstallFinalizer)
 		controllerutil.AddFinalizer(o, uninstallFinalizer)
@@ -287,12 +307,25 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 
 	if manager.IsUpgradeRequired() {
 		for k, v := range r.OverrideValues {
+			if r.SuppressOverrideValues {
+				v = "****"
+			}
 			r.EventRecorder.Eventf(o, "Warning", "OverrideValuesInUse",
 				"Chart value %q overridden to %q by operator's watches.yaml", k, v)
 		}
 		force := hasAnnotation(helmUpgradeForceAnnotation, o)
-		previousRelease, upgradedRelease, err := manager.UpgradeRelease(ctx, release.ForceUpgrade(force))
+
+		previousRelease, upgradedRelease, err := manager.UpgradeRelease(release.ForceUpgrade(force))
 		if err != nil {
+			if errors.Is(err, release.ErrUpgradeFailed) {
+				// the forceRollback variable takes the value of the annotation,
+				// "helm.sdk.operatorframework.io/rollback-force".
+				// The default value for the annotation is true
+				forceRollback := readBoolAnnotationWithDefault(o, helmRollbackForceAnnotation, true)
+				if err := manager.RollBack(release.ForceRollback(forceRollback)); err != nil {
+					log.Error(err, "Error rolling back release")
+				}
+			}
 			log.Error(err, "Release failed")
 			status.SetCondition(types.HelmAppCondition{
 				Type:    types.ConditionReleaseFailed,
@@ -315,7 +348,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 		}
 
 		log.Info("Upgraded release", "force", force)
-		if log.V(0).Enabled() {
+		if log.V(1).Enabled() {
 			fmt.Println(diff.Generate(previousRelease.Manifest, upgradedRelease.Manifest))
 		}
 		log.V(1).Info("Config values", "values", upgradedRelease.Config)
@@ -334,7 +367,7 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 			Manifest: upgradedRelease.Manifest,
 		}
 		err = r.updateResourceStatus(ctx, o, status)
-		return reconcile.Result{RequeueAfter: r.ReconcilePeriod}, err
+		return reconcileResult, err
 	}
 
 	// If a change is made to the CR spec that causes a release failure, a
@@ -387,8 +420,29 @@ func (r HelmOperatorReconciler) Reconcile(ctx context.Context, request reconcile
 		Name:     expectedRelease.Name,
 		Manifest: expectedRelease.Manifest,
 	}
-	err = r.updateResourceStatus(ctx, o, status)
-	return reconcile.Result{RequeueAfter: r.ReconcilePeriod}, err
+
+	if !reflect.DeepEqual(status, originalStatus) {
+		err = r.updateResourceStatus(ctx, o, status)
+	}
+
+	return reconcileResult, err
+}
+
+// returns the reconcile period that will be set to the RequeueAfter field in the reconciler. If any period
+// is specified in the custom resource's annotations, this will be returned. If not, the existing reconcile period
+// will be returned. An error will be thrown if the custom resource time period is not in proper format.
+func determineReconcilePeriod(currentPeriod time.Duration, o *unstructured.Unstructured) (time.Duration, error) {
+	// If custom resource annotations are present, they will take precedence over the command-line flag
+	if annot, exists := o.UnstructuredContent()["metadata"].(map[string]any)["annotations"]; exists {
+		if timeDuration, present := annot.(map[string]any)[helmReconcilePeriodAnnotation]; present {
+			annotationsPeriod, err := time.ParseDuration(timeDuration.(string))
+			if err != nil {
+				return currentPeriod, err // First return value does not matter, since err != nil
+			}
+			return annotationsPeriod, nil
+		}
+	}
+	return currentPeriod, nil
 }
 
 // returns the boolean representation of the annotation string
@@ -406,6 +460,21 @@ func hasAnnotation(anno string, o *unstructured.Unstructured) bool {
 		value = i
 	}
 	return value
+}
+
+func readBoolAnnotationWithDefault(obj *unstructured.Unstructured, annotation string, fallback bool) bool {
+	val, ok := obj.GetAnnotations()[annotation]
+	if !ok {
+		return fallback
+	}
+	r, err := strconv.ParseBool(val)
+	if err != nil {
+		log.Error(
+			fmt.Errorf("%s", strings.ToLower(err.Error())), "error parsing annotation", "annotation", annotation)
+		return fallback
+	}
+
+	return r
 }
 
 func (r HelmOperatorReconciler) updateResource(ctx context.Context, o client.Object) error {
@@ -426,8 +495,8 @@ func (r HelmOperatorReconciler) waitForDeletion(ctx context.Context, o client.Ob
 
 	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
-	return wait.PollImmediateUntil(time.Millisecond*10, func() (bool, error) {
-		err := r.Client.Get(tctx, key, o)
+	return wait.PollUntilContextCancel(tctx, time.Millisecond*10, false, func(pctx context.Context) (bool, error) {
+		err := r.Client.Get(pctx, key, o)
 		if apierrors.IsNotFound(err) {
 			return true, nil
 		}
@@ -435,5 +504,5 @@ func (r HelmOperatorReconciler) waitForDeletion(ctx context.Context, o client.Ob
 			return false, err
 		}
 		return false, nil
-	}, tctx.Done())
+	})
 }

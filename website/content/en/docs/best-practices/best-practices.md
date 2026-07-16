@@ -11,16 +11,15 @@ Considerations for Operator developers:
 
 - An Operator should manage a single type of application, essentially following the UNIX principle: do one thing and do it well.
 
-- If an application consists of multiple tiers or components, multiple Operators should be written one for each of them. For example, if the application consists of Redis, AMQ and MySQL, there should be 3 Operators, not one.
+- If an application consists of multiple tiers or components, multiple Operators should be written one for each of them. For example, if the application consists of Redis, AMQ, and MySQL, there should be 3 Operators, not one.
 
 - If there is significant orchestration and sequencing involved, an Operator should be written that represents the entire stack, in turn delegating to other Operators for orchestrating their part of it.
 
-- Operators should own a CRD and only one Operator should control a CRD on a cluster. Two Operators managing the same CRD is not a recommended best practice. In the case where an API exists but with multiple implementations, this is typically an example of a no-op Operator because it doesn't have any deployment or reconciliation loop to define the shared API and other Operators depend on this Operator to provide one implementation of the API, e.g. similar to PVCs or Ingress.
+- Operators should own a CRD and only one Operator should control a CRD on a cluster. Two Operators managing the same CRD is not a recommended best practice. An API that exists with multiple implementations is a typical example of a no-op Operator. The no-op Operator doesn't have any deployment or reconciliation loop to define the shared API and other Operators depend on this Operator to provide one implementation of the API, e.g. similar to PVCs or Ingress. 
 
 - Inside an Operator, multiple controllers should be used if multiple CRDs are managed. This helps in separation of concerns and code readability. Note that this doesn't necessarily mean that we need to have one container image per controller, but rather one reconciliation loop (which could be running as part of the same Operator binary) per CRD.
 
-- An Operator shouldn't deploy or manage other operators (such patterns are known as meta or super operators). It's the Operator Lifecycle Manager's job to manage the deployment and lifecycle of operators. For further information check [Dependency Resolution][Dependency Resolution].
-
+- An Operator shouldn't deploy or manage other operators (such patterns are known as meta or super operators or include CRDs in its Operands). It's the Operator Lifecycle Manager's job to manage the deployment and lifecycle of operators. For further information check [Dependency Resolution][Dependency Resolution].
 
 - If multiple operators are packaged and shipped as a single entity by the same CSV for example, then it is recommended to add all owned and required CRDs, as well as all deployments for operators that manage the owned CRDs, to the same CSV.
 
@@ -38,6 +37,8 @@ Considerations for Operator developers:
 
 - Operators are instrumented to provide useful, actionable metrics to external systems (e.g. monitoring/alerting platforms).  Minimally, metrics should represent the software's health and key performance indicators, as well as support the creation of [service levels indicators](https://en.wikipedia.org/wiki/Service_level_indicator) such as throughput, latency, availability, errors, capacity, etc.
 
+- Operators may create objects as part of their operational duty. Object accumulation can consume unnecessary resources, slow down the API and clutter the user interface. As such it is important for operators to keep good hygiene and to clean up resources when they are not needed. Here are instructions on [how to handle cleanup on deletion][advanced-topics].
+
 ### Summary
 
 - One Operator per managed application
@@ -50,6 +51,7 @@ Considerations for Operator developers:
 - Use semver / observe Kubernetes guidelines on versioning APIs
 - Use OpenAPI spec with structural schema on CRDs
 - Operators expose metrics to external systems
+- Operators cleanup resources on deletion
 
 ## Running On-Cluster
 
@@ -98,3 +100,4 @@ On the cluster, an Operator...
 - Offers (pre)configuration via a `“Configuration CR”` instantiated by InitContainers
 
 [Dependency Resolution]: https://olm.operatorframework.io/docs/concepts/olm-architecture/dependency-resolution/
+[advanced-topics]:/docs/building-operators/golang/advanced-topics#handle-cleanup-on-deletion

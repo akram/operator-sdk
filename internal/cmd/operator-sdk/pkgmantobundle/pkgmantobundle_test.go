@@ -16,7 +16,6 @@ package pkgmantobundle
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,7 +25,7 @@ import (
 	"github.com/operator-framework/operator-sdk/internal/util/projutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -34,7 +33,7 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 	var (
 		p         pkgManToBundleCmd
 		pkgManDir string
-		outputDir string
+		outputDir = "bundle-output"
 	)
 
 	BeforeEach(func() {
@@ -65,7 +64,6 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 		It("should generate multiple bundles for each version of manifests", func() {
 			// Specify input package manifest directory and output directory
 			pkgManDir = filepath.Join("testdata", "packagemanifests")
-			outputDir = "bundles-output"
 
 			p.pkgmanifestDir = pkgManDir
 			p.outputDir = outputDir
@@ -78,7 +76,7 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 			Expect(getNumberOfDirectories(p.outputDir)).To(BeEquivalentTo(2))
 
 			By("Verifying that each of them are valid bundles and their package name")
-			bundles, err := ioutil.ReadDir(p.outputDir)
+			bundles, err := os.ReadDir(p.outputDir)
 			Expect(err).NotTo(HaveOccurred())
 
 			for _, bundle := range bundles {
@@ -88,19 +86,31 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 
 				// Verifying that bundle contains required files
 				Expect(fileExists(filepath.Join(p.outputDir, bundle.Name(), "bundle.Dockerfile"))).To(BeTrue())
-				Expect(fileExists(filepath.Join(p.outputDir, bundle.Name(), "metadata", "annotations.yaml"))).To(BeTrue())
+				Expect(fileExists(filepath.Join(p.outputDir, bundle.Name(), defaultSubBundleDir, "metadata", "annotations.yaml"))).To(BeTrue())
 				Expect(b.CSV).NotTo(BeNil())
 				Expect(b.V1CRDs).NotTo(BeNil())
 
 				// Verify if scorecard config exiss in the bundle
 				if bundle.Name() == "bundle-0.0.1" {
-					Expect(fileExists(filepath.Join(p.outputDir, bundle.Name(), "tests", "scorecard", "config.yaml"))).To(BeTrue())
+					Expect(fileExists(filepath.Join(p.outputDir, bundle.Name(), defaultSubBundleDir, "tests", "scorecard", "config.yaml"))).To(BeTrue())
 				}
 			}
 		})
 
+		It("should build image when build command is provided", func() {
+			// Specify input package manifest directory and output directory
+			pkgManDir = filepath.Join("testdata", "packagemanifests")
+
+			p.pkgmanifestDir = pkgManDir
+			p.outputDir = outputDir
+			p.baseImg = "quay.io/example/memcached-operator"
+			p.buildCmd = "docker build -f bundle.Dockerfile . -t"
+
+			err := p.run()
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("should error when output directory already exists", func() {
-			outputDir = "bundles-output"
 			err := os.Mkdir(outputDir, projutil.DirMode)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -116,7 +126,7 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 			It("should be able to extract SDK stamps from CSV", func() {
 				annotations := map[string]string{
 					"operators.operatorframework.io/builder":        "operator-sdk-v1.5.0",
-					"operators.operatorframework.io/project_layout": "go.kubebuilder.io/v3",
+					"operators.operatorframework.io/project_layout": "go.kubebuilder.io/v4",
 				}
 
 				csv := operatorsv1alpha1.ClusterServiceVersion{
@@ -153,19 +163,21 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 				},
 			}
 
+			defaultChannel := "gamma"
+
 			It("should get the list of channels for corresponding CSV", func() {
 				channels := map[string][]string{
 					"memcached-operator:0.0.1": {"alpha", "beta"},
 				}
 
-				ch := getChannelsByCSV(&bundle, channels)
+				ch := getChannelsByCSV(&bundle, channels, defaultChannel)
 				Expect(ch).To(BeEquivalentTo("alpha,beta"))
 			})
 
-			It("if no channel is provided, default to preview", func() {
+			It("if no channel is provided, default to candidate", func() {
 				channels := map[string][]string{}
-				ch := getChannelsByCSV(&bundle, channels)
-				Expect(ch).To(BeEquivalentTo("preview"))
+				ch := getChannelsByCSV(&bundle, channels, defaultChannel)
+				Expect(ch).To(BeEquivalentTo(defaultChannel))
 			})
 		})
 	})
@@ -213,11 +225,11 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 			Expect(err.Error()).To(ContainSubstring("cannot find packagename from the manifest directory"))
 		})
 
-		It("should assign default channel name of not provided", func() {
+		It("should error when defaultChannel name is empty", func() {
 			pkg.DefaultChannelName = ""
-			_, defaultChannel, _, err := getPackageMetadata(&pkg)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(defaultChannel).To(BeEquivalentTo("preview"))
+			_, _, _, err := getPackageMetadata(&pkg)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("cannot find the default channel for package"))
 		})
 	})
 })
@@ -225,7 +237,7 @@ var _ = Describe("Running pkgmanToBundle command", func() {
 func getNumberOfDirectories(inputDir string) int {
 	count := 0
 
-	dirs, err := ioutil.ReadDir(inputDir)
+	dirs, err := os.ReadDir(inputDir)
 	Expect(err).NotTo(HaveOccurred())
 
 	for _, d := range dirs {

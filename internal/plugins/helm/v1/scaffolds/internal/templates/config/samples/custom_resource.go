@@ -24,7 +24,7 @@ import (
 	"text/template"
 
 	"helm.sh/helm/v3/pkg/chart"
-	"sigs.k8s.io/kubebuilder/v3/pkg/machinery"
+	"sigs.k8s.io/kubebuilder/v4/pkg/machinery"
 	"sigs.k8s.io/yaml"
 )
 
@@ -73,7 +73,7 @@ func (f *CustomResource) SetTemplateDefaults() error {
 
 func indent(spaces int, v string) string {
 	pad := strings.Repeat(" ", spaces)
-	return pad + strings.Replace(v, "\n", "\n"+pad, -1)
+	return pad + strings.ReplaceAll(v, "\n", "\n"+pad)
 }
 
 // GetFuncMap implements machinery.UseCustomFuncMap
@@ -83,7 +83,7 @@ func (f *CustomResource) GetFuncMap() template.FuncMap {
 	return fm
 }
 
-const defaultSpecTemplate = `foo: bar
+const defaultSpecTemplate = `# TODO(user): Add fields here
 `
 
 const customResourceTemplate = `apiVersion: {{ .Resource.QualifiedGroup }}/{{ .Resource.Version }}

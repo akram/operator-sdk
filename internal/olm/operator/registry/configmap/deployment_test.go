@@ -17,7 +17,7 @@ package configmap
 import (
 	"fmt"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -160,7 +160,7 @@ var _ = Describe("Deployment", func() {
 			initCmd := "/bin/initializer -o /path/to/database.db -m /registry/manifests"
 			srvCmd := "/bin/registry-server -d /path/to/database.db -t /var/log/temp.log"
 
-			Expect(getDBContainerCmd("/path/to/database.db", "/var/log/temp.log")).Should(Equal(fmt.Sprintf("%s && %s", initCmd, srvCmd)))
+			Expect(getDBContainerCmd("/path/to/database.db", "/var/log/temp.log")).Should(Equal(fmt.Sprintf("%s && exec %s", initCmd, srvCmd)))
 		})
 	})
 
@@ -247,7 +247,7 @@ var _ = Describe("Deployment", func() {
 		})
 		It("should return a dployment for a custom made function", func() {
 			f := func(d *appsv1.Deployment) {
-				d.ObjectMeta.Namespace = "testns2"
+				d.Namespace = "testns2"
 			}
 			f(dep)
 
@@ -258,7 +258,7 @@ var _ = Describe("Deployment", func() {
 			f1(dep)
 
 			f2 := func(d *appsv1.Deployment) {
-				d.ObjectMeta.Namespace = "testns2"
+				d.Namespace = "testns2"
 			}
 			f2(dep)
 
